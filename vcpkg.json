@@ -11,6 +11,8 @@
 				"gui",
 				"jpeg",
 				"png",
+				"sql",
+				"sql-sqlite",
 				"thread",
 				"widgets"
 			]
