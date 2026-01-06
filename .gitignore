@@ -53,6 +53,7 @@ __pycache__
 # ld-decode data files
 *.tbc
 *.tbc.json
+*.tbc.db
 testdata
 testout
 
