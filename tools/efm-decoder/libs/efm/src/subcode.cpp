@@ -23,6 +23,7 @@
 ************************************************************************/
 
 #include "subcode.h"
+#include "tbc/logging.h"
 
 // Takes 98 bytes of subcode data and returns a FrameMetadata object
 SectionMetadata Subcode::fromData(const QByteArray &data)
@@ -60,7 +61,7 @@ SectionMetadata Subcode::fromData(const QByteArray &data)
 
     // if (oneCount != 96 && oneCount != 0) {
     //     if (m_showDebug) {
-    //         qDebug() << "Subcode::fromData(): P channel data contains" << 96-oneCount << "zeros and"
+    //         tbcDebugStream() << "Subcode::fromData(): P channel data contains" << 96-oneCount << "zeros and"
     //                  << oneCount << "ones - indicating some p-channel corruption";
     //     }
     // }
@@ -83,6 +84,36 @@ SectionMetadata Subcode::fromData(const QByteArray &data)
         quint8 controlNybble = qChannelData[0] >> 4;
         quint8 modeNybble = qChannelData[0] & 0x0F;
 
+        // Validate the mode nybble before processing
+        bool validMode = (modeNybble >= 0x0 && modeNybble <= 0x4);
+        
+        if (!validMode) {
+            // Invalid mode nybble - treat as corrupted data even though CRC passed
+            if (m_showDebug)
+                tbcDebugStream() << "Subcode::fromData(): Invalid Q-mode nybble! Must be 0-4, got"
+                                 << modeNybble << "- Q channel data is:" << qChannelData.toHex();
+            
+            // Set the q-channel data to invalid and use default values
+            // Extract absolute time for diagnostic purposes
+            qint32 minutes = bcd2ToInt(qChannelData[7]);
+            qint32 seconds = bcd2ToInt(qChannelData[8]);
+            qint32 frames = bcd2ToInt(qChannelData[9]);
+
+            if (minutes < 0) minutes = 0;
+            if (minutes > 59) minutes = 59;
+            if (seconds < 0) seconds = 0;
+            if (seconds > 59) seconds = 59;
+            if (frames < 0) frames = 0;
+            if (frames > 74) frames = 74;
+
+            SectionTime badAbsTime = SectionTime(minutes, seconds, frames);
+            if (m_showDebug)
+                tbcDebugStream() << "Subcode::fromData(): Potentially corrupt absolute time is:"
+                                 << badAbsTime.toString();
+            sectionMetadata.setValid(false);
+            return sectionMetadata;
+        }
+
         // Set the q-channel mode
         switch (modeNybble) {
         case 0x0:
@@ -101,11 +132,36 @@ SectionMetadata Subcode::fromData(const QByteArray &data)
         case 0x4:
             sectionMetadata.setQMode(SectionMetadata::QMode4);
             break;
-        default:
+        }
+
+        // Validate the control nybble before processing
+        bool validControl = (controlNybble <= 0x4) || (controlNybble == 0x6) || 
+                            (controlNybble >= 0x8 && controlNybble <= 0xB);
+        
+        if (!validControl) {
+            // Invalid control nybble - treat as corrupted data even though CRC passed
             if (m_showDebug)
-                qDebug() << "Subcode::fromData(): Q channel data is:" << qChannelData.toHex();
-            qFatal("Subcode::fromData(): Invalid Q-mode nybble! Must be 1, 2, 3 or 4 not %d",
-                   modeNybble);
+                tbcDebugStream() << "Subcode::fromData(): Invalid control nybble! Must be 0-4, 6, or 8-11, got"
+                                 << controlNybble << "- Q channel data is:" << qChannelData.toHex();
+            
+            // Set the q-channel data to invalid
+            qint32 minutes = bcd2ToInt(qChannelData[7]);
+            qint32 seconds = bcd2ToInt(qChannelData[8]);
+            qint32 frames = bcd2ToInt(qChannelData[9]);
+
+            if (minutes < 0) minutes = 0;
+            if (minutes > 59) minutes = 59;
+            if (seconds < 0) seconds = 0;
+            if (seconds > 59) seconds = 59;
+            if (frames < 0) frames = 0;
+            if (frames > 74) frames = 74;
+
+            SectionTime badAbsTime = SectionTime(minutes, seconds, frames);
+            if (m_showDebug)
+                tbcDebugStream() << "Subcode::fromData(): Potentially corrupt absolute time is:"
+                                 << badAbsTime.toString();
+            sectionMetadata.setValid(false);
+            return sectionMetadata;
         }
 
         // Set the q-channel control settings
@@ -180,11 +236,6 @@ SectionMetadata Subcode::fromData(const QByteArray &data)
             sectionMetadata.setPreemphasis(true);
             sectionMetadata.set2Channel(false);
             break;
-        default:
-            if (m_showDebug)
-                qDebug() << "Subcode::fromData(): Q channel data is:" << qChannelData.toHex();
-            qFatal("Subcode::fromData(): Invalid control nybble! Must be 0-3, 4-7 or 8-11 not %d",
-                   controlNybble);
         }
 
         if (sectionMetadata.qMode() == SectionMetadata::QMode1
@@ -197,23 +248,29 @@ SectionMetadata Subcode::fromData(const QByteArray &data)
             // If the track number is 1-99, then this is a user data frame
             if (trackNumber == 0) {
                 sectionMetadata.setSectionType(SectionType(SectionType::LeadIn), 0);
-                qDebug() << "Subcode::fromData(): Q-Mode 1/4 has track number 0 - this is a lead-in frame";
+                tbcDebugStream() << "Subcode::fromData(): Q-Mode 1/4 has track number 0 - this is a lead-in frame";
             } else if (trackNumber == 0xAA) {
                 sectionMetadata.setSectionType(SectionType(SectionType::LeadOut), 0);
-                qDebug() << "Subcode::fromData(): Q-Mode 1/4 has track number 0xAA - this is a lead-out frame";
+                tbcDebugStream() << "Subcode::fromData(): Q-Mode 1/4 has track number 0xAA - this is a lead-out frame";
             } else {
                 sectionMetadata.setSectionType(SectionType(SectionType::UserData), trackNumber);
             }
 
             // Set the frame time q_data_channel[3-5]
-            sectionMetadata.setSectionTime(SectionTime(
-                    bcd2ToInt(qChannelData[3]), bcd2ToInt(qChannelData[4]), bcd2ToInt(qChannelData[5])));
+            // Validate BCD values to handle edge case where CRC passes but data is corrupt
+            qint32 sectionMinutes = validateAndClampTimeValue(bcd2ToInt(qChannelData[3]), 59, "section minutes", sectionMetadata);
+            qint32 sectionSeconds = validateAndClampTimeValue(bcd2ToInt(qChannelData[4]), 59, "section seconds", sectionMetadata);
+            qint32 sectionFrames = validateAndClampTimeValue(bcd2ToInt(qChannelData[5]), 74, "section frames", sectionMetadata);
+            sectionMetadata.setSectionTime(SectionTime(sectionMinutes, sectionSeconds, sectionFrames));
 
             // Set the zero byte q_data_channel[6] - Not used at the moment
 
             // Set the ap time q_data_channel[7-9]
-            sectionMetadata.setAbsoluteSectionTime(SectionTime(
-                    bcd2ToInt(qChannelData[7]), bcd2ToInt(qChannelData[8]), bcd2ToInt(qChannelData[9])));
+            // Validate BCD values to handle edge case where CRC passes but data is corrupt
+            qint32 absMinutes = validateAndClampTimeValue(bcd2ToInt(qChannelData[7]), 59, "absolute minutes", sectionMetadata);
+            qint32 absSeconds = validateAndClampTimeValue(bcd2ToInt(qChannelData[8]), 59, "absolute seconds", sectionMetadata);
+            qint32 absFrames = validateAndClampTimeValue(bcd2ToInt(qChannelData[9]), 74, "absolute frames", sectionMetadata);
+            sectionMetadata.setAbsoluteSectionTime(SectionTime(absMinutes, absSeconds, absFrames));
         } else if (sectionMetadata.qMode() == SectionMetadata::QMode2) {
             // Extract the 52 bit UPC/EAN code
             // This is a 13 digit BCD code, so we need to convert it to an integer
@@ -230,13 +287,16 @@ SectionMetadata Subcode::fromData(const QByteArray &data)
                     upcString = "0" + upcString;
                 }
 
-                qDebug() << "Subcode::fromData(): Q-Mode 2 has UPC/EAN code of:" << upcString;
+                tbcDebugStream() << "Subcode::fromData(): Q-Mode 2 has UPC/EAN code of:" << upcString;
             }
 
             // Only the absolute frame number is included for Q mode 2
             sectionMetadata.setSectionType(SectionType(SectionType::UserData), 1);
             sectionMetadata.setSectionTime(SectionTime(0, 0, 0));
-            sectionMetadata.setAbsoluteSectionTime(SectionTime(0, 0, bcd2ToInt(qChannelData[9])));
+            
+            // Validate BCD value to handle edge case where CRC passes but data is corrupt
+            qint32 absFrames = validateAndClampTimeValue(bcd2ToInt(qChannelData[9]), 74, "absolute frames (QMode2)", sectionMetadata);
+            sectionMetadata.setAbsoluteSectionTime(SectionTime(0, 0, absFrames));
         } else if (sectionMetadata.qMode() == SectionMetadata::QMode3) {
             // There is no test data for this qmode, so this is untested
             qWarning("Subcode::fromData(): Q-Mode 3 metadata is present on this disc.  This is untested.");
@@ -245,7 +305,10 @@ SectionMetadata Subcode::fromData(const QByteArray &data)
             // Only the absolute frame number is included for Q mode 3
             sectionMetadata.setSectionType(SectionType(SectionType::UserData), 1);
             sectionMetadata.setSectionTime(SectionTime(0, 0, 0));
-            sectionMetadata.setAbsoluteSectionTime(SectionTime(0, 0, bcd2ToInt(qChannelData[9])));
+            
+            // Validate BCD value to handle edge case where CRC passes but data is corrupt
+            qint32 absFrames = validateAndClampTimeValue(bcd2ToInt(qChannelData[9]), 74, "absolute frames (QMode3)", sectionMetadata);
+            sectionMetadata.setAbsoluteSectionTime(SectionTime(0, 0, absFrames));
         } else {
             qFatal("Subcode::fromData(): Invalid Q-mode %d", sectionMetadata.qMode());
         }
@@ -255,7 +318,7 @@ SectionMetadata Subcode::fromData(const QByteArray &data)
         // Set the q-channel data to invalid leaving the rest of
         // the metadata as default values
         if (m_showDebug)
-            qDebug() << "Subcode::fromData(): Invalid CRC in Q-channel data - expected:"
+            tbcDebugStream() << "Subcode::fromData(): Invalid CRC in Q-channel data - expected:"
                      << QString::number(getQChannelCrc(qChannelData), 16)
                      << "calculated:" << QString::number(calculateQChannelCrc16(qChannelData), 16);
 
@@ -273,7 +336,7 @@ SectionMetadata Subcode::fromData(const QByteArray &data)
 
         SectionTime badAbsTime = SectionTime(minutes, seconds, frames);
         if (m_showDebug)
-            qDebug().noquote() << "Subcode::fromData(): Q channel data is:" << qChannelData.toHex()
+            tbcDebugStream().noquote() << "Subcode::fromData(): Q channel data is:" << qChannelData.toHex()
                                << "potentially corrupt absolute time is:"
                                << badAbsTime.toString();
         sectionMetadata.setValid(false);
@@ -287,20 +350,19 @@ SectionMetadata Subcode::fromData(const QByteArray &data)
     if (sectionMetadata.trackNumber() == 0
         && sectionMetadata.sectionType().type() != SectionType::LeadIn) {
         if (m_showDebug)
-            qDebug("Subcode::fromData(): Track number 0 is only valid for lead-in frames");
+            tbcDebug(QStringLiteral("Subcode::fromData(): Track number 0 is only valid for lead-in frames"));
     } else if (sectionMetadata.trackNumber() == 0xAA
                && sectionMetadata.sectionType().type() != SectionType::LeadOut) {
         if (m_showDebug)
-            qDebug("Subcode::fromData(): Track number 0xAA is only valid for lead-out frames");
+            tbcDebug(QStringLiteral("Subcode::fromData(): Track number 0xAA is only valid for lead-out frames"));
     } else if (sectionMetadata.trackNumber() > 99) {
         if (m_showDebug)
-            qDebug("Subcode::fromData(): Track number %d is out of range",
-                   sectionMetadata.trackNumber());
+            tbcDebugStream() << "Subcode::fromData(): Track number" << sectionMetadata.trackNumber() << "is out of range";
     }
 
     if (sectionMetadata.isRepaired()) {
         if (m_showDebug)
-            qDebug().noquote()
+            tbcDebugStream().noquote()
                     << "Subcode::fromData(): Q-channel repaired for section with absolute time:"
                     << sectionMetadata.absoluteSectionTime().toString()
                     << "track number:" << sectionMetadata.trackNumber()
@@ -615,6 +677,21 @@ quint8 Subcode::intToBcd2(quint8 value)
 
     // Ensure the result is always 2 bytes (00-99)
     return bcd & 0xFF;
+}
+
+// Validate and clamp time component values, marking section as repaired if needed
+// Returns the clamped value
+qint32 Subcode::validateAndClampTimeValue(qint32 value, qint32 maxValue, const QString &valueName, 
+                                          SectionMetadata &sectionMetadata)
+{
+    if (value > maxValue) {
+        if (m_showDebug)
+            tbcDebugStream().nospace() << "Subcode::validateAndClampTimeValue(): Invalid " << valueName 
+                               << " value " << value << " - marking section as repaired";
+        sectionMetadata.setRepaired(true);
+        return maxValue;
+    }
+    return value;
 }
 
 // Convert BCD (Binary Coded Decimal) to integer

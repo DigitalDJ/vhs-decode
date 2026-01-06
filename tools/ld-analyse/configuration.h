@@ -1,26 +1,12 @@
-/************************************************************************
-
-    configuration.h
-
-    ld-analyse - TBC output analysis
-    Copyright (C) 2018-2022 Simon Inns
-
-    This file is part of ld-decode-tools.
-
-    ld-analyse is free software: you can redistribute it and/or
-    modify it under the terms of the GNU General Public License as
-    published by the Free Software Foundation, either version 3 of the
-    License, or (at your option) any later version.
-
-    This program is distributed in the hope that it will be useful,
-    but WITHOUT ANY WARRANTY; without even the implied warranty of
-    MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
-    GNU General Public License for more details.
-
-    You should have received a copy of the GNU General Public License
-    along with this program.  If not, see <http://www.gnu.org/licenses/>.
-
-************************************************************************/
+/******************************************************************************
+ * configuration.h
+ * ld-analyse - TBC output analysis GUI
+ *
+ * SPDX-License-Identifier: GPL-3.0-or-later
+ * SPDX-FileCopyrightText: 2018-2025 Simon Inns
+ *
+ * This file is part of ld-decode-tools.
+ ******************************************************************************/
 
 #ifndef CONFIGURATION_H
 #define CONFIGURATION_H
@@ -75,6 +61,12 @@ public:
     void setChromaDecoderConfigDialogGeometry(QByteArray chromaDecoderConfigDialogGeometry);
     QByteArray getChromaDecoderConfigDialogGeometry(void);
 
+    // Get and set methods - view options
+    void setToggleChromaDuringSeek(bool toggleChromaDuringSeek);
+    bool getToggleChromaDuringSeek(void);
+    void setResizeFrameWithWindow(bool resizeFrameWithWindow);
+    bool getResizeFrameWithWindow(void);
+
 signals:
 
 public slots:
@@ -104,11 +96,18 @@ private:
         QByteArray chromaDecoderConfigDialogGeometry;
     };
 
+    // View options
+    struct ViewOptions {
+        bool toggleChromaDuringSeek;
+        bool resizeFrameWithWindow;
+    };
+
     // Overall settings structure
     struct Settings {
         qint32 version;
         Directories directories;
         Windows windows;
+        ViewOptions viewOptions;
     } settings;
 
     void setDefault(void);

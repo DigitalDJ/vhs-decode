@@ -2,7 +2,7 @@
 
     ffmetadata.cpp
 
-    ld-export-metadata - Export JSON metadata into other formats
+    ld-export-metadata - Export ld-decode metadata into other formats
     Copyright (C) 2019-2023 Adam Sampson
 
     This file is part of ld-decode-tools.
@@ -29,6 +29,7 @@
 #include <QtGlobal>
 #include <QFile>
 #include <QTextStream>
+#include "tbc/logging.h"
 
 bool writeFfmetadata(LdDecodeMetaData &metaData, const QString &fileName)
 {
@@ -43,7 +44,7 @@ bool writeFfmetadata(LdDecodeMetaData &metaData, const QString &fileName)
     // Open the output file
     QFile file(fileName);
     if (!file.open(QFile::WriteOnly | QFile::Text)) {
-        qDebug("writeFfmetadata: Could not open file for output");
+        tbcDebug(QStringLiteral("writeFfmetadata: Could not open file for output"));
         return false;
     }
     QTextStream stream(&file);

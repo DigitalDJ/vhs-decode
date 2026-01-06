@@ -1,29 +1,16 @@
-﻿/************************************************************************
-
-    oscilloscopedialog.cpp
-
-    ld-analyse - TBC output analysis
-    Copyright (C) 2018-2022 Simon Inns
-
-    This file is part of ld-decode-tools.
-
-    ld-analyse is free software: you can redistribute it and/or
-    modify it under the terms of the GNU General Public License as
-    published by the Free Software Foundation, either version 3 of the
-    License, or (at your option) any later version.
-
-    This program is distributed in the hope that it will be useful,
-    but WITHOUT ANY WARRANTY; without even the implied warranty of
-    MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
-    GNU General Public License for more details.
-
-    You should have received a copy of the GNU General Public License
-    along with this program.  If not, see <http://www.gnu.org/licenses/>.
-
-************************************************************************/
+﻿/******************************************************************************
+ * oscilloscopedialog.cpp
+ * ld-analyse - TBC output analysis GUI
+ *
+ * SPDX-License-Identifier: GPL-3.0-or-later
+ * SPDX-FileCopyrightText: 2018-2025 Simon Inns
+ *
+ * This file is part of ld-decode-tools.
+ ******************************************************************************/
 
 #include "oscilloscopedialog.h"
 #include "ui_oscilloscopedialog.h"
+#include "tbc/logging.h"
 
 #include <cassert>
 
@@ -63,7 +50,7 @@ OscilloscopeDialog::~OscilloscopeDialog()
 
 void OscilloscopeDialog::showTraceImage(TbcSource::ScanLineData scanLineData, qint32 xCoord, qint32 yCoord, qint32 frameWidth, qint32 frameHeight, bool bothSources)
 {
-    qDebug() << "OscilloscopeDialog::showTraceImage(): Called with xCoord =" << xCoord << "and yCoord =" << yCoord;
+    tbcDebugStream() << "OscilloscopeDialog::showTraceImage(): Called with xCoord =" << xCoord << "and yCoord =" << yCoord;
 
     // Store coordinates
     maximumX = frameWidth;

@@ -370,28 +370,7 @@
              </property>
             </widget>
            </item>
-           <item>
-            <widget class="QPushButton" name="stretchFieldButton">
-             <property name="minimumSize">
-              <size>
-               <width>30</width>
-               <height>30</height>
-              </size>
-             </property>
-             <property name="baseSize">
-              <size>
-               <width>30</width>
-               <height>30</height>
-              </size>
-             </property>
-             <property name="toolTip">
-              <string>&lt;html&gt;&lt;head/&gt;&lt;body&gt;&lt;p&gt;Stretch field to frame height&lt;/p&gt;&lt;/body&gt;&lt;/html&gt;</string>
-             </property>
-             <property name="text">
-              <string>2:1</string>
-             </property>
-            </widget>
-           </item>
+
            <item>
             <widget class="QPushButton" name="mouseModePushButton">
              <property name="minimumSize">
@@ -668,7 +647,7 @@
     </property>
     <addaction name="actionOpen_TBC_file"/>
     <addaction name="actionReload_TBC"/>
-    <addaction name="actionSave_JSON"/>
+    <addaction name="actionSave_Metadata"/>
     <addaction name="separator"/>
     <addaction name="actionSave_frame_as_PNG"/>
     <addaction name="separator"/>
@@ -705,7 +684,10 @@
     <addaction name="actionZoom_1x"/>
     <addaction name="actionZoom_2x"/>
     <addaction name="actionZoom_3x"/>
+    <addaction name="separator"/>
     <addaction name="toggleAutoResize"/>
+    <addaction name="actionResizeFrameWithWindow"/>
+    <addaction name="actionToggleChromaDuringSeek"/>
    </widget>
    <addaction name="menuFile"/>
    <addaction name="menuView"/>
@@ -800,13 +782,38 @@
   </action>
   <action name="toggleAutoResize">
    <property name="text">
-	<string>Toggle Auto Resize</string>
+	<string>Toggle auto-resize on zoom</string>
    </property>
    <property name="checkable">
 	<bool>true</bool>
    </property>
    <property name="checked">
 	<bool>true</bool>
+   </property>
+  </action>
+  <action name="actionResizeFrameWithWindow">
+   <property name="text">
+	<string>Resize frame with window</string>
+   </property>
+   <property name="checkable">
+	<bool>true</bool>
+   </property>
+   <property name="checked">
+	<bool>true</bool>
+   </property>
+  </action>
+  <action name="actionToggleChromaDuringSeek">
+   <property name="text">
+    <string>Toggle chroma during seek</string>
+   </property>
+   <property name="toolTip">
+    <string>Temporarily disable chroma decoding when holding next/previous frame buttons</string>
+   </property>
+   <property name="checkable">
+    <bool>true</bool>
+   </property>
+   <property name="checked">
+    <bool>false</bool>
    </property>
   </action>
   <action name="actionDropout_analysis">
@@ -886,9 +893,9 @@
     <string>Ctrl+A</string>
    </property>
   </action>
-  <action name="actionSave_JSON">
+  <action name="actionSave_Metadata">
    <property name="text">
-    <string>Save JSON</string>
+    <string>Save Metadata</string>
    </property>
    <property name="shortcut">
     <string>Ctrl+S</string>

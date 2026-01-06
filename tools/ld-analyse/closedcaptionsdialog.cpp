@@ -1,29 +1,16 @@
-/************************************************************************
-
-    closedcaptionsdialog.cpp
-
-    ld-analyse - TBC output analysis
-    Copyright (C) 2018-2022 Simon Inns
-
-    This file is part of ld-decode-tools.
-
-    ld-analyse is free software: you can redistribute it and/or
-    modify it under the terms of the GNU General Public License as
-    published by the Free Software Foundation, either version 3 of the
-    License, or (at your option) any later version.
-
-    This program is distributed in the hope that it will be useful,
-    but WITHOUT ANY WARRANTY; without even the implied warranty of
-    MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
-    GNU General Public License for more details.
-
-    You should have received a copy of the GNU General Public License
-    along with this program.  If not, see <http://www.gnu.org/licenses/>.
-
-************************************************************************/
+/******************************************************************************
+ * closedcaptionsdialog.cpp
+ * ld-analyse - TBC output analysis GUI
+ *
+ * SPDX-License-Identifier: GPL-3.0-or-later
+ * SPDX-FileCopyrightText: 2018-2025 Simon Inns
+ *
+ * This file is part of ld-decode-tools.
+ ******************************************************************************/
 
 #include "closedcaptionsdialog.h"
 #include "ui_closedcaptionsdialog.h"
+#include "tbc/logging.h"
 
 ClosedCaptionsDialog::ClosedCaptionsDialog(QWidget *parent) :
     QDialog(parent),
@@ -48,7 +35,7 @@ ClosedCaptionsDialog::~ClosedCaptionsDialog()
 
 void ClosedCaptionsDialog::addData(qint32 frameNumber, qint32 data0, qint32 data1)
 {
-    qDebug() << "ClosedCaptionsDialog::addData: Frame number" << frameNumber << "data0 =" << data0 << "data1 =" << data1;
+    tbcDebugStream() << "ClosedCaptionsDialog::addData: Frame number" << frameNumber << "data0 =" << data0 << "data1 =" << data1;
 
     // Check that we have a continuous stream of frames
     if (frameNumber == lastFrameNumber) return;
@@ -63,7 +50,7 @@ void ClosedCaptionsDialog::addData(qint32 frameNumber, qint32 data0, qint32 data
         if (data0 == lastNonDisplayCommand && data1 == lastDisplayCommand) {
             // This is a command repeat; ignore
         } else {
-            qDebug() << "ClosedCaptionsDialog::addData(): Got non-display control code of" << data0;
+            tbcDebugStream() << "ClosedCaptionsDialog::addData(): Got non-display control code of" << data0;
             processCommand(data0, data1);
             lastNonDisplayCommand = data0;
             lastDisplayCommand = data1;
@@ -104,61 +91,61 @@ void ClosedCaptionsDialog::processCommand(qint32 data0, qint32 data1)
                 // Normal command
                 switch (commandType) {
                 case 0:
-                    qDebug() << "ClosedCaptionsDialog::processCommand(): Miscellaneous command - Resume caption loading";
+                    tbcDebugStream() << "ClosedCaptionsDialog::processCommand(): Miscellaneous command - Resume caption loading";
                     ui->captionTextEdit->moveCursor (QTextCursor::End);
                     ui->captionTextEdit->insertPlainText(" ");
                     ui->captionTextEdit->moveCursor (QTextCursor::End);
                     break;
                 case 1:
-                    qDebug() << "ClosedCaptionsDialog::processCommand(): Miscellaneous command - Backspace";
+                    tbcDebugStream() << "ClosedCaptionsDialog::processCommand(): Miscellaneous command - Backspace";
                     break;
                 case 2:
-                    qDebug() << "ClosedCaptionsDialog::processCommand(): Miscellaneous command - Reserved 1";
+                    tbcDebugStream() << "ClosedCaptionsDialog::processCommand(): Miscellaneous command - Reserved 1";
                     ui->captionTextEdit->moveCursor (QTextCursor::End);
                     ui->captionTextEdit->insertPlainText(" ");
                     ui->captionTextEdit->moveCursor (QTextCursor::End);
                     break;
                 case 3:
-                    qDebug() << "ClosedCaptionsDialog::processCommand(): Miscellaneous command - Reserved 2";
+                    tbcDebugStream() << "ClosedCaptionsDialog::processCommand(): Miscellaneous command - Reserved 2";
                     break;
                 case 4:
-                    qDebug() << "ClosedCaptionsDialog::processCommand(): Miscellaneous command - Delete to end of row";
+                    tbcDebugStream() << "ClosedCaptionsDialog::processCommand(): Miscellaneous command - Delete to end of row";
                     ui->captionTextEdit->moveCursor (QTextCursor::End);
                     ui->captionTextEdit->insertPlainText(" ");
                     ui->captionTextEdit->moveCursor (QTextCursor::End);
                     break;
                 case 5:
-                    qDebug() << "ClosedCaptionsDialog::processCommand(): Miscellaneous command - Roll-up captions, 2 rows";
+                    tbcDebugStream() << "ClosedCaptionsDialog::processCommand(): Miscellaneous command - Roll-up captions, 2 rows";
                     break;
                 case 6:
-                    qDebug() << "ClosedCaptionsDialog::processCommand(): Miscellaneous command - Roll-up captions, 3 rows";
+                    tbcDebugStream() << "ClosedCaptionsDialog::processCommand(): Miscellaneous command - Roll-up captions, 3 rows";
                     break;
                 case 7:
-                    qDebug() << "ClosedCaptionsDialog::processCommand(): Miscellaneous command - Roll-up captions, 4 rows";
+                    tbcDebugStream() << "ClosedCaptionsDialog::processCommand(): Miscellaneous command - Roll-up captions, 4 rows";
                     break;
                 case 8:
-                    qDebug() << "ClosedCaptionsDialog::processCommand(): Miscellaneous command - Flash on";
+                    tbcDebugStream() << "ClosedCaptionsDialog::processCommand(): Miscellaneous command - Flash on";
                     break;
                 case 9:
-                    qDebug() << "ClosedCaptionsDialog::processCommand(): Miscellaneous command - Resume direct captioning";
+                    tbcDebugStream() << "ClosedCaptionsDialog::processCommand(): Miscellaneous command - Resume direct captioning";
                     break;
                 case 10:
-                    qDebug() << "ClosedCaptionsDialog::processCommand(): Miscellaneous command - Text restart";
+                    tbcDebugStream() << "ClosedCaptionsDialog::processCommand(): Miscellaneous command - Text restart";
                     break;
                 case 11:
-                    qDebug() << "ClosedCaptionsDialog::processCommand(): Miscellaneous command - Resume text display";
+                    tbcDebugStream() << "ClosedCaptionsDialog::processCommand(): Miscellaneous command - Resume text display";
                     break;
                 case 12:
-                    qDebug() << "ClosedCaptionsDialog::processCommand(): Miscellaneous command - Erase displayed memory";
+                    tbcDebugStream() << "ClosedCaptionsDialog::processCommand(): Miscellaneous command - Erase displayed memory";
                     break;
                 case 13:
-                    qDebug() << "ClosedCaptionsDialog::processCommand(): Miscellaneous command - Carriage return";
+                    tbcDebugStream() << "ClosedCaptionsDialog::processCommand(): Miscellaneous command - Carriage return";
                     break;
                 case 14:
-                    qDebug() << "ClosedCaptionsDialog::processCommand(): Miscellaneous command - Erase non-displayed memory";
+                    tbcDebugStream() << "ClosedCaptionsDialog::processCommand(): Miscellaneous command - Erase non-displayed memory";
                     break;
                 case 15:
-                    qDebug() << "ClosedCaptionsDialog::processCommand(): Miscellaneous command - End of caption (flip memories)";
+                    tbcDebugStream() << "ClosedCaptionsDialog::processCommand(): Miscellaneous command - End of caption (flip memories)";
                     ui->captionTextEdit->append("");
                     break;
                 }
@@ -166,13 +153,13 @@ void ClosedCaptionsDialog::processCommand(qint32 data0, qint32 data1)
                 // Tab offset command
                 switch (commandType) {
                 case 1:
-                    qDebug() << "ClosedCaptionsDialog::processCommand(): Miscellaneous command - Tab offset (1 column)";
+                    tbcDebugStream() << "ClosedCaptionsDialog::processCommand(): Miscellaneous command - Tab offset (1 column)";
                     break;
                 case 2:
-                    qDebug() << "ClosedCaptionsDialog::processCommand(): Miscellaneous command - Tab offset (2 columns)";
+                    tbcDebugStream() << "ClosedCaptionsDialog::processCommand(): Miscellaneous command - Tab offset (2 columns)";
                     break;
                 case 3:
-                    qDebug() << "ClosedCaptionsDialog::processCommand(): Miscellaneous command - Tab offset (3 columns)";
+                    tbcDebugStream() << "ClosedCaptionsDialog::processCommand(): Miscellaneous command - Tab offset (3 columns)";
                     break;
                 }
             }
@@ -183,7 +170,7 @@ void ClosedCaptionsDialog::processCommand(qint32 data0, qint32 data1)
 
         // Check for midrow command code (indicated by data0 & 01110111 == 00010001)
         if ((data0 & 0x77) == 0x11) {
-            qDebug() << "ClosedCaptionsDialog::processCommand(): Midrow command";
+            tbcDebugStream() << "ClosedCaptionsDialog::processCommand(): Midrow command";
 
             // Done
             return;
@@ -205,7 +192,7 @@ void ClosedCaptionsDialog::processCommand(qint32 data0, qint32 data1)
         //qint32 displayU =          (data1 & 0x01);      // 0b00000001;
 
     } else {
-        qDebug() << "ClosedCaptionsDialog::addData(): Display control code invalid!" << data1;
+        tbcDebugStream() << "ClosedCaptionsDialog::addData(): Display control code invalid!" << data1;
     }
 }
 

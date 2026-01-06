@@ -1,5 +1,47 @@
 cmake_minimum_required(VERSION 3.16)
 
+# Enforce out-of-source builds before project() to catch issues early
+if(CMAKE_SOURCE_DIR STREQUAL CMAKE_BINARY_DIR)
+    message(FATAL_ERROR "In-source builds are not allowed. Please create a build directory and run:
+    mkdir build
+    cd build
+    cmake -DCMAKE_BUILD_TYPE=RelWithDebInfo ..")
+endif()
+
+# Also prevent building directly in subdirectories of the source tree
+# Exception: Allow 'build' and 'build-*' directories as they are gitignored
+get_filename_component(REAL_SOURCE_DIR "${CMAKE_SOURCE_DIR}" REALPATH)
+get_filename_component(REAL_BINARY_DIR "${CMAKE_BINARY_DIR}" REALPATH)
+get_filename_component(BUILD_DIR_NAME "${CMAKE_BINARY_DIR}" NAME)
+file(RELATIVE_PATH REL_PATH "${REAL_SOURCE_DIR}" "${REAL_BINARY_DIR}")
+
+# Check if build directory is inside source tree (rel path doesn't start with ..)
+# but allow 'build' or 'build-*' directory names
+if(NOT REL_PATH MATCHES "^\\.\\." AND 
+   NOT BUILD_DIR_NAME STREQUAL "build" AND 
+   NOT BUILD_DIR_NAME MATCHES "^build-")
+    message(FATAL_ERROR "Building within the source tree (except 'build/' or 'build-*/') is not allowed.
+    Build directory: ${REAL_BINARY_DIR}
+    Source directory: ${REAL_SOURCE_DIR}
+    
+    Please use one of these approaches:
+    
+    1. Standard build directory (recommended):
+       mkdir build
+       cd build
+       cmake -DCMAKE_BUILD_TYPE=RelWithDebInfo ..
+    
+    2. Named build directory:
+       mkdir build-release
+       cd build-release
+       cmake -DCMAKE_BUILD_TYPE=Release ..
+    
+    3. Out-of-tree build:
+       mkdir ../ld-decode-build
+       cd ../ld-decode-build
+       cmake -DCMAKE_BUILD_TYPE=RelWithDebInfo ../ld-decode")
+endif()
+
 project(ld-decode-tools)
 
 list(APPEND CMAKE_MODULE_PATH "${CMAKE_CURRENT_LIST_DIR}/cmake_modules")
@@ -19,10 +61,7 @@ set(CMAKE_CXX_STANDARD_REQUIRED ON)
 
 # Options that can be specified with -D
 
-option(USE_QWT
-    "Use the Qwt library; if OFF, ld-analyse will not be built"
-    ON
-)
+
 
 # Needed for ezpwd as it uses alternative operators
 if(MSVC)
@@ -31,10 +70,6 @@ else()
     add_compile_options(-O3)
     add_link_options(-O3)
 endif()
-
-set(USE_QT_VERSION "" CACHE STRING
-    "Version of Qt to use, 5 or 6 (Which is used by default can vary due to how cmake find functions work, but will often default to Qt6)"
-)
 
 option(BUILD_LDF_READER
     "build ld_ldf_reader"
@@ -53,44 +88,10 @@ set(CMAKE_AUTOMOC ON)
 include(GNUInstallDirs)
 set(CMAKE_AUTOUIC ON)
 
-set(QT_PACKAGE_NAMES Qt5 Qt6)
-if(USE_QT_VERSION)
-    set(QT_PACKAGE_NAMES Qt${USE_QT_VERSION})
-endif()
-find_package(QT NAMES ${QT_PACKAGE_NAMES} REQUIRED COMPONENTS Core)
-if(USE_QWT)
-    find_package(Qt${QT_VERSION_MAJOR} REQUIRED COMPONENTS Gui Widgets)
-else()
-    find_package(Qt${QT_VERSION_MAJOR} REQUIRED COMPONENTS Core)
-endif()
+find_package(Qt6 REQUIRED COMPONENTS Core Gui Widgets Sql)
 message(STATUS "Qt Version: ${QT_VERSION}")
 
-# For Qt < 5.15, emulate 5.15's Qt5CoreConfig.cmake, so we don't have to
-# specify Qt5/Qt6 elsewhere.
-if(QT_VERSION VERSION_LESS 5.15)
-    function(qt_add_resources outfiles)
-        qt5_add_resources("${outfiles}" ${ARGN})
-        set("${outfiles}" "${${outfiles}}" PARENT_SCOPE)
-    endfunction()
-    foreach(library Core Gui Widgets)
-        add_library(Qt::${library} INTERFACE IMPORTED)
-        set_target_properties(Qt::${library} PROPERTIES
-            INTERFACE_LINK_LIBRARIES "Qt5::${library}")
-    endforeach()
-endif()
-
 find_package(PkgConfig REQUIRED)
-if(USE_QWT)
-    # try pkg-config first
-    pkg_check_modules(QWT Qt${QT_VERSION_MAJOR}Qwt6)
-    if(QWT_FOUND)
-        # .....
-        set(QWT_INCLUDE_DIR ${QWT_INCLUDE_DIRS})
-        set(QWT_LIBRARY ${QWT_LIBRARIES})
-    else()
-        find_package(Qwt REQUIRED)
-    endif()
-endif()
 
 if(NOT MSVC)
     pkg_check_modules(FFTW IMPORTED_TARGET fftw3)
@@ -133,18 +134,16 @@ add_compile_definitions(APP_COMMIT=\"${GIT_COMMIT_HASH}\")
 
 # Subdirectories
 
-if(USE_QWT)
-    add_subdirectory(tools/ld-analyse)
-endif()
+add_subdirectory(tools/ld-analyse)
 add_subdirectory(tools/ld-chroma-decoder)
 add_subdirectory(tools/ld-chroma-decoder/encoder)
 add_subdirectory(tools/ld-disc-stacker)
 add_subdirectory(tools/ld-discmap)
 add_subdirectory(tools/ld-dropout-correct)
+add_subdirectory(tools/ld-export-decode-metadata)
 add_subdirectory(tools/ld-export-metadata)
+add_subdirectory(tools/ld-json-converter)
 add_subdirectory(tools/ld-lds-converter)
-add_subdirectory(tools/ld-process-ac3)
-add_subdirectory(tools/ld-process-efm)
 add_subdirectory(tools/ld-process-vbi)
 add_subdirectory(tools/ld-process-vits)
 add_subdirectory(tools/library)
@@ -183,6 +182,9 @@ if(BUILD_PYTHON)
     endif()
 
     add_custom_target(python-build ALL
+        # Clean build directory first to avoid permission issues
+        COMMAND ${CMAKE_COMMAND} -E remove_directory ${PYTHON_BUILD_DIR}
+        COMMAND ${CMAKE_COMMAND} -E make_directory ${PYTHON_BUILD_DIR}
         COMMAND ${PYTHON} ./setup.py --quiet
             build --build-base ${PYTHON_BUILD_DIR}
         WORKING_DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR}
@@ -199,6 +201,11 @@ if(BUILD_PYTHON)
                 egg_info --egg-base ${CMAKE_CURRENT_BINARY_DIR}
                 install ${PYTHON_PREFIX_LINE}
                         --root \$ENV{DESTDIR}
+            WORKING_DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR}
+        )
+        # Clean up root-owned files after install to prevent permission issues
+        execute_process(
+            COMMAND ${CMAKE_COMMAND} -E remove_directory ${PYTHON_BUILD_DIR}
             WORKING_DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR}
         )
     ")

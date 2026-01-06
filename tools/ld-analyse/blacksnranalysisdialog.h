@@ -1,26 +1,12 @@
-/************************************************************************
-
-    blacksnranalysisdialog.h
-
-    ld-analyse - TBC output analysis
-    Copyright (C) 2018-2022 Simon Inns
-
-    This file is part of ld-decode-tools.
-
-    ld-analyse is free software: you can redistribute it and/or
-    modify it under the terms of the GNU General Public License as
-    published by the Free Software Foundation, either version 3 of the
-    License, or (at your option) any later version.
-
-    This program is distributed in the hope that it will be useful,
-    but WITHOUT ANY WARRANTY; without even the implied warranty of
-    MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
-    GNU General Public License for more details.
-
-    You should have received a copy of the GNU General Public License
-    along with this program.  If not, see <http://www.gnu.org/licenses/>.
-
-************************************************************************/
+/******************************************************************************
+ * blacksnranalysisdialog.h
+ * ld-analyse - TBC output analysis GUI
+ *
+ * SPDX-License-Identifier: GPL-3.0-or-later
+ * SPDX-FileCopyrightText: 2018-2025 Simon Inns
+ *
+ * This file is part of ld-decode-tools.
+ ******************************************************************************/
 
 #ifndef BLACKSNRANALYSISDIALOG_H
 #define BLACKSNRANALYSISDIALOG_H
@@ -28,17 +14,9 @@
 #include <cmath>
 
 #include <QDialog>
-#include <qwt_plot.h>
-#include <qwt_plot_canvas.h>
-#include <qwt_legend.h>
-#include <qwt_plot_grid.h>
-#include <qwt_plot_curve.h>
-#include <qwt_plot_zoomer.h>
-#include <qwt_plot_panner.h>
-#include <qwt_scale_widget.h>
-#include <qwt_scale_draw.h>
-#include <qwt_plot_marker.h>
-
+#include <QTimer>
+#include <QShowEvent>
+#include "plotwidget.h"
 #include "lddecodemetadata.h"
 
 namespace Ui {
@@ -58,27 +36,31 @@ public:
     void finishUpdate(qint32 _currentFrameNumber);
     void updateFrameMarker(qint32 _currentFrameNumber);
 
+protected:
+    void showEvent(QShowEvent *event) override;
+
 private slots:
-    void scaleDivChangedSlot();
+    void onPlotAreaChanged();
+    void onUpdateTimerTimeout();
 
 private:
     void removeChartContents();
     void generateTrendLine();
 
     Ui::BlackSnrAnalysisDialog *ui;
-    QwtPlotZoomer *zoomer;
-    QwtPlotPanner *panner;
-    QwtPlot *plot;
-    QwtLegend *legend;
-    QwtPlotGrid *grid;
-    QPolygonF *blackPoints;
-    QwtPlotCurve *blackCurve;
-    QPolygonF *trendPoints;
-    QwtPlotCurve *trendCurve;
-    QwtPlotMarker *plotMarker;
+    PlotWidget *plot;
+    PlotSeries *blackSeries;
+    PlotSeries *trendSeries;
+    PlotMarker *plotMarker;
 
     double maxY;
     qint32 numberOfFrames;
+    QVector<QPointF> blackPoints;
+    QVector<QPointF> trendPoints;
+    
+    QTimer *updateTimer;
+    qint32 pendingFrameNumber;
+    bool hasPendingUpdate;
     QVector<double> tlPoint;
 };
 

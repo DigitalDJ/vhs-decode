@@ -1,31 +1,18 @@
-/************************************************************************
-
-    configuration.cpp
-
-    ld-analyse - TBC output analysis
-    Copyright (C) 2018-2022 Simon Inns
-
-    This file is part of ld-decode-tools.
-
-    ld-analyse is free software: you can redistribute it and/or
-    modify it under the terms of the GNU General Public License as
-    published by the Free Software Foundation, either version 3 of the
-    License, or (at your option) any later version.
-
-    This program is distributed in the hope that it will be useful,
-    but WITHOUT ANY WARRANTY; without even the implied warranty of
-    MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
-    GNU General Public License for more details.
-
-    You should have received a copy of the GNU General Public License
-    along with this program.  If not, see <http://www.gnu.org/licenses/>.
-
-************************************************************************/
+/******************************************************************************
+ * configuration.cpp
+ * ld-analyse - TBC output analysis GUI
+ *
+ * SPDX-License-Identifier: GPL-3.0-or-later
+ * SPDX-FileCopyrightText: 2018-2025 Simon Inns
+ *
+ * This file is part of ld-decode-tools.
+ ******************************************************************************/
 
 #include "configuration.h"
+#include "tbc/logging.h"
 
 // This define should be incremented if the settings file format changes
-static const qint32 SETTINGSVERSION = 4;
+static const qint32 SETTINGSVERSION = 5;
 
 Configuration::Configuration(QObject *parent) : QObject(parent)
 {
@@ -42,8 +29,8 @@ Configuration::Configuration(QObject *parent) : QObject(parent)
 
     // Are the configuration settings valid?
     if (settings.version != SETTINGSVERSION) {
-        qDebug() << "Configuration::Configuration(): Configuration invalid or wrong version (" <<
-                    settings.version << "!= " << SETTINGSVERSION <<").  Setting to default values";
+        tbcDebugStream() << "Configuration::Configuration(): Configuration invalid or wrong version ("
+                         << settings.version << "!=" << SETTINGSVERSION << "). Setting to default values";
 
         // Set default configuration
         setDefault();
@@ -82,14 +69,20 @@ void Configuration::writeConfiguration(void)
     configuration->setValue("chromaDecoderConfigDialogGeometry", settings.windows.chromaDecoderConfigDialogGeometry);
     configuration->endGroup();
 
+    // View options
+    configuration->beginGroup("viewOptions");
+    configuration->setValue("toggleChromaDuringSeek", settings.viewOptions.toggleChromaDuringSeek);
+    configuration->setValue("resizeFrameWithWindow", settings.viewOptions.resizeFrameWithWindow);
+    configuration->endGroup();
+
     // Sync the settings with disk
-    qDebug() << "Configuration::writeConfiguration(): Writing configuration to disk";
+    tbcDebugStream() << "Configuration::writeConfiguration(): Writing configuration to disk";
     configuration->sync();
 }
 
 void Configuration::readConfiguration(void)
 {
-    qDebug() << "Configuration::readConfiguration(): Reading configuration from" << configuration->fileName();
+    tbcDebugStream() << "Configuration::readConfiguration(): Reading configuration from" << configuration->fileName();
 
     // Read the valid configuration flag
     settings.version = configuration->value("version").toInt();
@@ -115,6 +108,12 @@ void Configuration::readConfiguration(void)
     settings.windows.videoParametersDialogGeometry = configuration->value("videoParametersDialogGeometry").toByteArray();
     settings.windows.chromaDecoderConfigDialogGeometry = configuration->value("chromaDecoderConfigDialogGeometry").toByteArray();
     configuration->endGroup();
+
+    // View options
+    configuration->beginGroup("viewOptions");
+    settings.viewOptions.toggleChromaDuringSeek = configuration->value("toggleChromaDuringSeek", false).toBool();
+    settings.viewOptions.resizeFrameWithWindow = configuration->value("resizeFrameWithWindow", true).toBool();
+    configuration->endGroup();
 }
 
 void Configuration::setDefault(void)
@@ -139,6 +138,10 @@ void Configuration::setDefault(void)
     settings.windows.closedCaptionDialogGeometry = QByteArray();
     settings.windows.videoParametersDialogGeometry = QByteArray();
     settings.windows.chromaDecoderConfigDialogGeometry = QByteArray();
+
+    // View options
+    settings.viewOptions.toggleChromaDuringSeek = false;
+    settings.viewOptions.resizeFrameWithWindow = true;
 
     // Write the configuration
     writeConfiguration();
@@ -286,4 +289,25 @@ void Configuration::setChromaDecoderConfigDialogGeometry(QByteArray chromaDecode
 QByteArray Configuration::getChromaDecoderConfigDialogGeometry(void)
 {
     return settings.windows.chromaDecoderConfigDialogGeometry;
+}
+
+// View options
+void Configuration::setToggleChromaDuringSeek(bool toggleChromaDuringSeek)
+{
+    settings.viewOptions.toggleChromaDuringSeek = toggleChromaDuringSeek;
+}
+
+bool Configuration::getToggleChromaDuringSeek(void)
+{
+    return settings.viewOptions.toggleChromaDuringSeek;
+}
+
+void Configuration::setResizeFrameWithWindow(bool resizeFrameWithWindow)
+{
+    settings.viewOptions.resizeFrameWithWindow = resizeFrameWithWindow;
+}
+
+bool Configuration::getResizeFrameWithWindow(void)
+{
+    return settings.viewOptions.resizeFrameWithWindow;
 }

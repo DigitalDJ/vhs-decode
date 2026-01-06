@@ -1,29 +1,16 @@
-/************************************************************************
-
-    vbidialog.cpp
-
-    ld-analyse - TBC output analysis
-    Copyright (C) 2018-2022 Simon Inns
-
-    This file is part of ld-decode-tools.
-
-    ld-analyse is free software: you can redistribute it and/or
-    modify it under the terms of the GNU General Public License as
-    published by the Free Software Foundation, either version 3 of the
-    License, or (at your option) any later version.
-
-    This program is distributed in the hope that it will be useful,
-    but WITHOUT ANY WARRANTY; without even the implied warranty of
-    MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
-    GNU General Public License for more details.
-
-    You should have received a copy of the GNU General Public License
-    along with this program.  If not, see <http://www.gnu.org/licenses/>.
-
-************************************************************************/
+/******************************************************************************
+ * vbidialog.cpp
+ * ld-analyse - TBC output analysis GUI
+ *
+ * SPDX-License-Identifier: GPL-3.0-or-later
+ * SPDX-FileCopyrightText: 2018-2025 Simon Inns
+ *
+ * This file is part of ld-decode-tools.
+ ******************************************************************************/
 
 #include "vbidialog.h"
 #include "ui_vbidialog.h"
+#include "tbc/logging.h"
 
 VbiDialog::VbiDialog(QWidget *parent) :
     QDialog(parent),
@@ -40,7 +27,7 @@ VbiDialog::~VbiDialog()
 
 void VbiDialog::updateVbi(VbiDecoder::Vbi vbi, bool isVbiValid)
 {
-    qDebug() << "VbiDialog::updateVbi(): Called";
+    tbcDebugStream() << "VbiDialog::updateVbi(): Called";
 
     if (!isVbiValid) {
         // VBI data is not valid
@@ -121,7 +108,7 @@ void VbiDialog::updateVbi(VbiDecoder::Vbi vbi, bool isVbiValid)
     if (vbi.clvPicNo != -1) clvTimecodeString += QString("%1").arg(vbi.clvPicNo, 2, 10, QChar('0'));
     else clvTimecodeString += "xx";
 
-    if (clvTimecodeString == "xx:xx:xx.xx") clvTimecodeString = "Unknown";
+    if (clvTimecodeString == "xx:xx:xx.xx") clvTimecodeString = tr("Unknown");
     ui->clvTimeCodeLabel->setText(clvTimecodeString);
 
     // Display original programme status
@@ -237,5 +224,5 @@ void VbiDialog::updateVideoId(VideoIdDecoder::VideoId videoid, bool isVideoIdVal
     if (videoid.vIdAps == VideoIdDecoder::VIdAps::pspOn2Line) ui->apsLabel->setText("On, 2-Line");
     if (videoid.vIdAps == VideoIdDecoder::VIdAps::pspOn4Line) ui->apsLabel->setText("On, 4-Line");
 
-    ui->analogPreRecordedLabel->setText(videoid.analoguePreRecorded ? "True" : "False");
+    ui->analogPreRecordedLabel->setText(videoid.analoguePreRecorded ? tr("True") : tr("False"));
 }

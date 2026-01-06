@@ -1,31 +1,18 @@
-/************************************************************************
-
-    whitesnranalysisdialog.cpp
-
-    ld-analyse - TBC output analysis
-    Copyright (C) 2018-2022 Simon Inns
-
-    This file is part of ld-decode-tools.
-
-    ld-analyse is free software: you can redistribute it and/or
-    modify it under the terms of the GNU General Public License as
-    published by the Free Software Foundation, either version 3 of the
-    License, or (at your option) any later version.
-
-    This program is distributed in the hope that it will be useful,
-    but WITHOUT ANY WARRANTY; without even the implied warranty of
-    MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
-    GNU General Public License for more details.
-
-    You should have received a copy of the GNU General Public License
-    along with this program.  If not, see <http://www.gnu.org/licenses/>.
-
-************************************************************************/
+/******************************************************************************
+ * whitesnranalysisdialog.cpp
+ * ld-analyse - TBC output analysis GUI
+ *
+ * SPDX-License-Identifier: GPL-3.0-or-later
+ * SPDX-FileCopyrightText: 2018-2025 Simon Inns
+ *
+ * This file is part of ld-decode-tools.
+ ******************************************************************************/
 
 #include "whitesnranalysisdialog.h"
 #include "ui_whitesnranalysisdialog.h"
 
-#include <QPen>
+#include <QTimer>
+#include <algorithm>
 
 WhiteSnrAnalysisDialog::WhiteSnrAnalysisDialog(QWidget *parent) :
     QDialog(parent),
@@ -34,18 +21,21 @@ WhiteSnrAnalysisDialog::WhiteSnrAnalysisDialog(QWidget *parent) :
     ui->setupUi(this);
     setWindowFlags(Qt::Window);
 
-    // Set up the chart view
-    plot = new QwtPlot();
-    zoomer = new QwtPlotZoomer(plot->canvas());
-    panner = new QwtPlotPanner(plot->canvas());
-    grid = new QwtPlotGrid();
-    whiteCurve = new QwtPlotCurve();
-    whitePoints = new QPolygonF();
-    trendCurve = new QwtPlotCurve();
-    trendPoints = new QPolygonF();
-    plotMarker = new QwtPlotMarker();
-
+    // Set up the plot widget
+    plot = new PlotWidget(this);
+    plot->updateTheme();
     ui->verticalLayout->addWidget(plot);
+
+    // Set up series and marker
+    whiteSeries = plot->addSeries("White SNR");
+    whiteSeries->setPen(QPen(Qt::black, 1));
+    
+    trendSeries = plot->addSeries("Trend line");
+    trendSeries->setPen(QPen(Qt::red, 2));
+    
+    plotMarker = plot->addMarker();
+    plotMarker->setStyle(PlotMarker::VLine);
+    plotMarker->setPen(QPen(Qt::blue, 2));
 
     // Set the maximum Y scale to 48
     maxY = 48;
@@ -53,16 +43,16 @@ WhiteSnrAnalysisDialog::WhiteSnrAnalysisDialog(QWidget *parent) :
     // Set the default number of frames
     numberOfFrames = 0;
 
-    // Connect to scale changed slot
-#ifdef Q_OS_WIN32
-    // Workaround for linker issue with Qwt on windows
-    connect(
-        plot->axisWidget(QwtPlot::xBottom), SIGNAL( scaleDivChanged() ),
-        this, SLOT( scaleDivChangedSlot() )
-    );
-#else
-    connect(plot->axisWidget(QwtPlot::xBottom), &QwtScaleWidget::scaleDivChanged, this, &WhiteSnrAnalysisDialog::scaleDivChangedSlot);
-#endif
+    // Set up update throttling timer
+    updateTimer = new QTimer(this);
+    updateTimer->setSingleShot(true);
+    updateTimer->setInterval(16); // ~60fps max update rate
+    connect(updateTimer, &QTimer::timeout, this, &WhiteSnrAnalysisDialog::onUpdateTimerTimeout);
+    hasPendingUpdate = false;
+    pendingFrameNumber = 0;
+
+    // Connect to plot area changed signal
+    connect(plot, &PlotWidget::plotAreaChanged, this, &WhiteSnrAnalysisDialog::onPlotAreaChanged);
 }
 
 WhiteSnrAnalysisDialog::~WhiteSnrAnalysisDialog()
@@ -77,16 +67,16 @@ void WhiteSnrAnalysisDialog::startUpdate(qint32 _numberOfFrames)
     removeChartContents();
     numberOfFrames = _numberOfFrames;
     tlPoint.resize(numberOfFrames + 1);
-    whitePoints->reserve(numberOfFrames);
+    whitePoints.reserve(numberOfFrames);
 }
 
 // Remove the axes and series from the chart, giving ownership back to this object
 void WhiteSnrAnalysisDialog::removeChartContents()
 {
     maxY = 42;
-    whitePoints->clear();
+    whitePoints.clear();
     tlPoint.clear();
-    trendPoints->clear();
+    trendPoints.clear();
     plot->replot();
 }
 
@@ -94,10 +84,12 @@ void WhiteSnrAnalysisDialog::removeChartContents()
 void WhiteSnrAnalysisDialog::addDataPoint(qint32 frameNumber, double whiteSnr)
 {
     if (!std::isnan(whiteSnr)) {
-        whitePoints->append(QPointF(static_cast<qreal>(frameNumber), static_cast<qreal>(whiteSnr)));
-        if (whiteSnr > maxY) maxY = ceil(whiteSnr); // Round up
+        // Clamp SNR values to minimum threshold (14 dB)
+        double clampedSnr = std::max(whiteSnr, 14.0);
+        whitePoints.append(QPointF(static_cast<qreal>(frameNumber), static_cast<qreal>(clampedSnr)));
+        if (clampedSnr > maxY) maxY = ceil(clampedSnr); // Round up
 
-        // Add to trendline data
+        // Add to trendline data (use original unclamped value for trend calculation)
         tlPoint[frameNumber] = whiteSnr;
     } else {
         // Add to trendline data (mark as null value)
@@ -108,80 +100,73 @@ void WhiteSnrAnalysisDialog::addDataPoint(qint32 frameNumber, double whiteSnr)
 // Finish the update and render the graph
 void WhiteSnrAnalysisDialog::finishUpdate(qint32 _currentFrameNumber)
 {
-    // Set the chart title
-    plot->setTitle("White SNR Analysis");
+    // Set up plot properties
+    plot->updateTheme(); // Auto-detect theme and set appropriate background
+    plot->setGridEnabled(true);
+    plot->setZoomEnabled(true);
+    plot->setPanEnabled(true);
+    
+    // Set axis titles and ranges
+    plot->setAxisTitle(Qt::Horizontal, "Frame number");
+    plot->setAxisTitle(Qt::Vertical, "SNR (in dB)");
+    plot->setAxisRange(Qt::Horizontal, 0, numberOfFrames);
+    plot->setAxisRange(Qt::Vertical, 14, maxY);
 
-    // Set the background and grid
-    plot->setCanvasBackground(Qt::white);
-    grid->attach(plot);
+    // Set the white series data (change color to dark gray)
+    whiteSeries->setPen(QPen(Qt::darkGray, 1));
+    whiteSeries->setData(whitePoints);
 
-    // Define the x-axis
-    plot->setAxisScale(QwtPlot::xBottom, 0, numberOfFrames, (numberOfFrames / 10));
-    plot->setAxisTitle(QwtPlot::xBottom, "Frame number");
-
-    // Define the y-axis (with a fixed scale)
-    plot->setAxisScale(QwtPlot::yLeft, 14, maxY, 4);
-    plot->setAxisTitle(QwtPlot::yLeft, "SNR (in dB)");
-
-    // Attach the white curve data to the chart
-    whiteCurve->setTitle("White SNR");
-    whiteCurve->setPen(Qt::darkGray, 1);
-    whiteCurve->setRenderHint(QwtPlotItem::RenderAntialiased, true);
-    whiteCurve->setSamples(*whitePoints);
-    whiteCurve->attach(plot);
-
-    // Attach the trend line curve data to the chart
+    // Generate and set the trend line
     generateTrendLine();
-    trendCurve->setTitle("Trend line");
-    trendCurve->setPen(Qt::red, 2);
-    trendCurve->setRenderHint(QwtPlotItem::RenderAntialiased, true);
-    trendCurve->setSamples(*trendPoints);
-    trendCurve->attach(plot);
+    trendSeries->setData(trendPoints);
 
-    // Define the plot marker
-    plotMarker->setLineStyle(QwtPlotMarker::VLine);
-    plotMarker->setLinePen(Qt::blue, 2, Qt::SolidLine);
-    plotMarker->setXValue(static_cast<double>(_currentFrameNumber));
-    plotMarker->attach(plot);
+    // Set the frame marker position
+    plotMarker->setPosition(QPointF(static_cast<double>(_currentFrameNumber), (maxY + 14) / 2));
 
-    // Update the axis
-    plot->updateAxes();
-
-    // Update the plot zoomer base
-    zoomer->setZoomBase(true);
-
-    // Set the plot zoomer mouse controls
-    zoomer->setMousePattern(QwtEventPattern::MouseSelect2, Qt::RightButton, Qt::ControlModifier);
-    zoomer->setMousePattern(QwtEventPattern::MouseSelect3, Qt::RightButton);
-
-    // Set the plot zoomer colour
-    zoomer->setRubberBandPen(QPen(Qt::red, 2, Qt::DotLine));
-    zoomer->setTrackerPen(QPen(Qt::red));
-
-    // Update the plot panner
-    panner->setAxisEnabled(QwtPlot::yRight, false);
-    panner->setMouseButton(Qt::MiddleButton);
-
-    // Render the chart
-    plot->maximumSize();
-    plot->show();
-}
-
-// Method to update the frame marker
-void WhiteSnrAnalysisDialog::updateFrameMarker(qint32 _currentFrameNumber)
-{
-    plotMarker->setXValue(static_cast<double>(_currentFrameNumber));
+    // Render the plot
     plot->replot();
 }
 
-void WhiteSnrAnalysisDialog::scaleDivChangedSlot()
+// Method to update the frame marker (throttled for performance)
+void WhiteSnrAnalysisDialog::updateFrameMarker(qint32 _currentFrameNumber)
 {
-    // If user zooms all the way out, reapply axis scale defaults
-    if (zoomer->zoomRectIndex() == 0) {
-        plot->setAxisScale(QwtPlot::xBottom, 0, numberOfFrames, (numberOfFrames / 10));
-        plot->setAxisScale(QwtPlot::yLeft, 14, maxY, 4);
-        plot->replot();
+    // Always store the pending frame number
+    pendingFrameNumber = _currentFrameNumber;
+    hasPendingUpdate = true;
+    
+    // Skip timer start if dialog is not visible - update will happen on show
+    if (!isVisible()) return;
+    
+    // Start or restart the timer
+    if (!updateTimer->isActive()) {
+        updateTimer->start();
     }
+}
+
+void WhiteSnrAnalysisDialog::onUpdateTimerTimeout()
+{
+    if (!hasPendingUpdate) return;
+    
+    plotMarker->setPosition(QPointF(static_cast<double>(pendingFrameNumber), (maxY + 14) / 2));
+    // No need to call plot->replot() - marker update() handles the redraw
+    
+    hasPendingUpdate = false;
+}
+
+void WhiteSnrAnalysisDialog::showEvent(QShowEvent *event)
+{
+    QDialog::showEvent(event);
+    
+    // Force immediate marker update if we have a pending position
+    if (hasPendingUpdate) {
+        onUpdateTimerTimeout();
+    }
+}
+
+void WhiteSnrAnalysisDialog::onPlotAreaChanged()
+{
+    // Handle plot area changes if needed
+    // The PlotWidget handles zoom/pan internally
 }
 
 // Method to generate the trendline points
@@ -195,6 +180,8 @@ void WhiteSnrAnalysisDialog::generateTrendLine()
     double avgSum = 0;
     qint32 target = numberOfFrames / 500; // Number of frames to average
 
+    trendPoints.clear();
+    
     for (qint32 f = 0; f < numberOfFrames; f++) {
         if (tlPoint[f] != -1) {
             avgSum += tlPoint[f];
@@ -205,7 +192,9 @@ void WhiteSnrAnalysisDialog::generateTrendLine()
         if (count == target) {
             if (avgSum > 0 && elements > 0) {
                 avgSum = avgSum / static_cast<double>(elements);
-                trendPoints->append(QPointF(f-target, avgSum));
+                // Clamp trend line points to minimum threshold (14 dB)
+                double clampedAvg = std::max(avgSum, 14.0);
+                trendPoints.append(QPointF(f-target, clampedAvg));
             }
             avgSum = 0;
             count = 0;

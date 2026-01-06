@@ -1,27 +1,13 @@
-/************************************************************************
-
-    chromadecoderconfigdialog.cpp
-
-    ld-analyse - TBC output analysis
-    Copyright (C) 2019-2022 Simon Inns
-    Copyright (C) 2020-2022 Adam Sampson
-
-    This file is part of ld-decode-tools.
-
-    ld-analyse is free software: you can redistribute it and/or
-    modify it under the terms of the GNU General Public License as
-    published by the Free Software Foundation, either version 3 of the
-    License, or (at your option) any later version.
-
-    This program is distributed in the hope that it will be useful,
-    but WITHOUT ANY WARRANTY; without even the implied warranty of
-    MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
-    GNU General Public License for more details.
-
-    You should have received a copy of the GNU General Public License
-    along with this program.  If not, see <http://www.gnu.org/licenses/>.
-
-************************************************************************/
+/******************************************************************************
+ * chromadecoderconfigdialog.cpp
+ * ld-analyse - TBC output analysis GUI
+ *
+ * SPDX-License-Identifier: GPL-3.0-or-later
+ * SPDX-FileCopyrightText: 2019-2025 Simon Inns
+ * SPDX-FileCopyrightText: 2020-2022 Adam Sampson
+ *
+ * This file is part of ld-decode-tools.
+ ******************************************************************************/
 
 #include "chromadecoderconfigdialog.h"
 #include "ui_chromadecoderconfigdialog.h"
@@ -183,7 +169,7 @@ void ChromaDecoderConfigDialog::updateDialog()
     ui->chromaPhaseValueLabel->setText(QString::number(palConfiguration.chromaPhase, 'f', 1) + QChar(0xB0));
     
     ui->yNRHorizontalSlider->setValue(static_cast<qint32>(ynrLevel * 10));
-    ui->yNRValueLabel->setText(QString::number(ynrLevel, 'f', 1) + " IRE");
+    ui->yNRValueLabel->setText(QString::number(ynrLevel, 'f', 1) + tr(" IRE"));
 	
 	if(sourceMode == TbcSource::BOTH_SOURCES)
 	{
@@ -294,7 +280,7 @@ void ChromaDecoderConfigDialog::updateDialog()
     ui->cNRHorizontalSlider->setValue(static_cast<qint32>(ntscConfiguration.cNRLevel * 10));
 
     ui->cNRValueLabel->setEnabled(isSourceNtsc);
-    ui->cNRValueLabel->setText(QString::number(ntscConfiguration.cNRLevel, 'f', 1) + " IRE");
+    ui->cNRValueLabel->setText(QString::number(ntscConfiguration.cNRLevel, 'f', 1) + tr(" IRE"));
 }
 
 // Methods to handle changes to the dialogue
@@ -407,7 +393,7 @@ void ChromaDecoderConfigDialog::on_showMapCheckBox_clicked()
 void ChromaDecoderConfigDialog::on_cNRHorizontalSlider_valueChanged(int value)
 {
     ntscConfiguration.cNRLevel = static_cast<double>(value) / 10;
-    ui->cNRValueLabel->setText(QString::number(ntscConfiguration.cNRLevel, 'f', 1) + " IRE");
+    ui->cNRValueLabel->setText(QString::number(ntscConfiguration.cNRLevel, 'f', 1) + tr(" IRE"));
     emit chromaDecoderConfigChanged();
 }
 
@@ -417,7 +403,7 @@ void ChromaDecoderConfigDialog::on_yNRHorizontalSlider_valueChanged(int value)
     ntscConfiguration.yNRLevel = static_cast<double>(value) / 10;
 	monoConfiguration.yNRLevel = static_cast<double>(value) / 10;
 	ynrLevel = static_cast<double>(value) / 10;
-    ui->yNRValueLabel->setText(QString::number(ntscConfiguration.yNRLevel, 'f', 1) + " IRE");
+    ui->yNRValueLabel->setText(QString::number(ntscConfiguration.yNRLevel, 'f', 1) + tr(" IRE"));
     emit chromaDecoderConfigChanged();
 }
 

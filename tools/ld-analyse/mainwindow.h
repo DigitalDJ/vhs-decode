@@ -1,26 +1,12 @@
-/************************************************************************
-
-    mainwindow.h
-
-    ld-analyse - TBC output analysis
-    Copyright (C) 2018-2022 Simon Inns
-
-    This file is part of ld-decode-tools.
-
-    ld-analyse is free software: you can redistribute it and/or
-    modify it under the terms of the GNU General Public License as
-    published by the Free Software Foundation, either version 3 of the
-    License, or (at your option) any later version.
-
-    This program is distributed in the hope that it will be useful,
-    but WITHOUT ANY WARRANTY; without even the implied warranty of
-    MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
-    GNU General Public License for more details.
-
-    You should have received a copy of the GNU General Public License
-    along with this program.  If not, see <http://www.gnu.org/licenses/>.
-
-************************************************************************/
+/******************************************************************************
+ * mainwindow.h
+ * ld-analyse - TBC output analysis GUI
+ *
+ * SPDX-License-Identifier: GPL-3.0-or-later
+ * SPDX-FileCopyrightText: 2018-2025 Simon Inns
+ *
+ * This file is part of ld-decode-tools.
+ ******************************************************************************/
 
 #ifndef MAINWINDOW_H
 #define MAINWINDOW_H
@@ -33,6 +19,7 @@
 #include <QMessageBox>
 #include <QLabel>
 #include <QMouseEvent>
+#include <QTimer>
 
 #include "oscilloscopedialog.h"
 #include "vectorscopedialog.h"
@@ -67,7 +54,7 @@ private slots:
     void on_actionExit_triggered();
     void on_actionOpen_TBC_file_triggered();
     void on_actionReload_TBC_triggered();
-    void on_actionSave_JSON_triggered();
+    void on_actionSave_Metadata_triggered();
     void on_actionLine_scope_triggered();
     void on_actionVectorscope_triggered();
     void on_actionAbout_ld_analyse_triggered();
@@ -85,14 +72,21 @@ private slots:
     void on_actionClosed_Captions_triggered();
     void on_actionVideo_parameters_triggered();
     void on_actionChroma_decoder_configuration_triggered();
+    void on_actionToggleChromaDuringSeek_triggered();
 
     // Media control frame handlers
     void on_previousPushButton_clicked();
     void on_nextPushButton_clicked();
+    void on_previousPushButton_pressed();
+    void on_previousPushButton_released();
+    void on_nextPushButton_pressed();
+    void on_nextPushButton_released();
     void on_endPushButton_clicked();
     void on_startPushButton_clicked();
     void on_posNumberSpinBox_editingFinished();
     void on_posHorizontalSlider_valueChanged(int value);
+    void on_posHorizontalSlider_sliderPressed();
+    void on_posHorizontalSlider_sliderReleased();
     void on_videoPushButton_clicked();
     void on_aspectPushButton_clicked();
     void on_dropoutsPushButton_clicked();
@@ -102,14 +96,16 @@ private slots:
     void on_zoomInPushButton_clicked();
     void on_zoomOutPushButton_clicked();
     void on_originalSizePushButton_clicked();
-    void on_stretchFieldButton_clicked();
     void on_mouseModePushButton_clicked();
     //void on_autoResizeButton_clicked();
 	void on_toggleAutoResize_toggled(bool checked);
+	void on_actionResizeFrameWithWindow_toggled(bool checked);
 
     // Miscellaneous handlers
     void scopeCoordsChangedSignalHandler(qint32 xCoord, qint32 yCoord);
     void vectorscopeChangedSignalHandler();
+    void onSliderDebounceTimeout();
+    void onDragPauseTimeout();
     void mousePressEvent(QMouseEvent *event);
     void mouseMoveEvent(QMouseEvent *event);
     void videoParametersChangedSignalHandler(const LdDecodeMetaData::VideoParameters &videoParameters);
@@ -149,12 +145,25 @@ private:
     TbcSource tbcSource;
     bool displayAspectRatio;
 	bool autoResize = true;
+	bool resizeFrameWithWindow = true;
     qint32 lastScopeLine;
     qint32 lastScopeDot;
     qint32 currentFieldNumber, currentFrameNumber;
     double scaleFactor;
     QPalette buttonPalette;
     QString lastFilename;
+    
+    // Slider debouncing
+    QTimer* sliderDebounceTimer;
+    QTimer* dragPauseTimer;
+    QTimer* resizeTimer;
+    qint32 pendingSliderValue;
+    bool sliderDragging;
+    
+    // Chroma toggle during seek
+    bool chromaSeekMode;
+    bool originalChromaState;
+    QTimer* seekTimer;
 
     // Update GUI methods
     void setGuiEnabled(bool enabled);
@@ -168,12 +177,15 @@ private:
     void setCurrentField(qint32 field);
     void sanitizeCurrentPosition();
 
-    // Image display methods
+	// Image display methods
     void showImage();
     void updateImage();
     qint32 getAspectAdjustment();
     void updateImageViewer();
     void hideImage();
+    void resizeFrameToWindow();
+    void enterChromaSeekMode(QPushButton* button);
+    void exitChromaSeekMode(QPushButton* button);
 
     // TBC source signal handlers
     void loadTbcFile(QString inputFileName);

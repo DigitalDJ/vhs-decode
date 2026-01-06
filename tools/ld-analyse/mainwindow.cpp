@@ -1,30 +1,17 @@
-/************************************************************************
-
-    mainwindow.cpp
-
-    ld-analyse - TBC output analysis
-    Copyright (C) 2018-2022 Simon Inns
-    Copyright (C) 2022 Adam Sampson
-
-    This file is part of ld-decode-tools.
-
-    ld-analyse is free software: you can redistribute it and/or
-    modify it under the terms of the GNU General Public License as
-    published by the Free Software Foundation, either version 3 of the
-    License, or (at your option) any later version.
-
-    This program is distributed in the hope that it will be useful,
-    but WITHOUT ANY WARRANTY; without even the implied warranty of
-    MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
-    GNU General Public License for more details.
-
-    You should have received a copy of the GNU General Public License
-    along with this program.  If not, see <http://www.gnu.org/licenses/>.
-
-************************************************************************/
+/******************************************************************************
+ * mainwindow.cpp
+ * ld-analyse - TBC output analysis GUI
+ *
+ * SPDX-License-Identifier: GPL-3.0-or-later
+ * SPDX-FileCopyrightText: 2018-2025 Simon Inns
+ * SPDX-FileCopyrightText: 2022 Adam Sampson
+ *
+ * This file is part of ld-decode-tools.
+ ******************************************************************************/
 
 #include "mainwindow.h"
 #include "ui_mainwindow.h"
+#include "tbc/logging.h"
 
 MainWindow::MainWindow(QString inputFilenameParam, QWidget *parent) :
     QMainWindow(parent),
@@ -84,6 +71,7 @@ MainWindow::MainWindow(QString inputFilenameParam, QWidget *parent) :
     // Load the window geometry and settings from the configuration
     restoreGeometry(configuration.getMainWindowGeometry());
     scaleFactor = configuration.getMainWindowScaleFactor();
+
     vbiDialog->restoreGeometry(configuration.getVbiDialogGeometry());
     oscilloscopeDialog->restoreGeometry(configuration.getOscilloscopeDialogGeometry());
     vectorscopeDialog->restoreGeometry(configuration.getVectorscopeDialogGeometry());
@@ -95,11 +83,60 @@ MainWindow::MainWindow(QString inputFilenameParam, QWidget *parent) :
     videoParametersDialog->restoreGeometry(configuration.getVideoParametersDialogGeometry());
     chromaDecoderConfigDialog->restoreGeometry(configuration.getChromaDecoderConfigDialogGeometry());
 
+    // Load view options from configuration
+    resizeFrameWithWindow = configuration.getResizeFrameWithWindow();
+    ui->actionResizeFrameWithWindow->setChecked(resizeFrameWithWindow);
+
     // Store the current button palette for the show dropouts button
-    buttonPalette = ui->dropoutsPushButton->palette();
+    // Use application palette to ensure it respects theme settings
+    buttonPalette = QApplication::palette();
+
+    // Initialize slider debouncing
+    sliderDebounceTimer = new QTimer(this);
+    sliderDebounceTimer->setSingleShot(true);
+    sliderDebounceTimer->setInterval(100); // 100ms debounce
+    connect(sliderDebounceTimer, &QTimer::timeout, this, &MainWindow::onSliderDebounceTimeout);
+    
+    // Initialize drag pause timer for visual feedback during long drags
+    dragPauseTimer = new QTimer(this);
+    dragPauseTimer->setSingleShot(true);
+    dragPauseTimer->setInterval(150); // 150ms pause before updating during drag
+    connect(dragPauseTimer, &QTimer::timeout, this, &MainWindow::onDragPauseTimeout);
+    
+    // Initialize resize timer for delayed frame resizing
+    resizeTimer = new QTimer(this);
+    resizeTimer->setSingleShot(true);
+    resizeTimer->setInterval(100); // 100ms delay for resize calculations
+    connect(resizeTimer, &QTimer::timeout, this, &MainWindow::resizeFrameToWindow);
+    
+    sliderDragging = false;
+    
+    // Initialize chroma seek mode tracking
+    chromaSeekMode = false;
+    originalChromaState = false;
+    
+    // Set up button hold detection timer
+    seekTimer = new QTimer(this);
+    seekTimer->setSingleShot(true);
+    seekTimer->setInterval(200); // 200ms to distinguish click from hold
+    connect(seekTimer, &QTimer::timeout, this, [this]() {
+        // Timer expired - enter chroma seek mode
+        if (configuration.getToggleChromaDuringSeek() && tbcSource.getChromaDecoder()) {
+            chromaSeekMode = true;
+            originalChromaState = true;
+            tbcSource.setChromaDecoder(false);
+            ui->videoPushButton->setText(tr("Source"));
+        }
+    });
+    
+    // Button press/release signals for chroma seek mode are auto-connected by Qt's auto-connection mechanism
+    pendingSliderValue = -1;
 
     // Set the GUI to unloaded
     updateGuiUnloaded();
+    
+    // Load configuration settings
+    ui->actionToggleChromaDuringSeek->setChecked(configuration.getToggleChromaDuringSeek());
 
     // Was a filename specified on the command line?
     if (!inputFilenameParam.isEmpty()) {
@@ -171,8 +208,8 @@ void MainWindow::setGuiEnabled(bool enabled)
     ui->actionChroma_decoder_configuration->setEnabled(enabled);
     ui->actionReload_TBC->setEnabled(enabled);
 
-    // "Save JSON" should be disabled by default
-    ui->actionSave_JSON->setEnabled(false);
+    // "Save Metadata" should be disabled by default
+    ui->actionSave_Metadata->setEnabled(false);
 
     // Set zoom button states
     ui->zoomInPushButton->setEnabled(enabled);
@@ -224,7 +261,7 @@ void MainWindow::resetGui()
     ui->zoomOutPushButton->setAutoRepeatDelay(500);
     ui->zoomOutPushButton->setAutoRepeatInterval(100);
 
-    ui->stretchFieldButton->setText(tr("2:1"));
+    // Initialize field stretch to 2:1 by default
     tbcSource.setStretchField(true);
 
     // Update the video parameters dialogue
@@ -251,14 +288,14 @@ void MainWindow::updateGuiLoaded()
 		statusText += (tbcSource.getVideoParameters().tapeFormat + " ");
 	}
     statusText += tbcSource.getSystemDescription();
-    statusText += " source loaded with ";
+    statusText += tr(" source loaded with ");
 
     if (tbcSource.getFieldViewEnabled()) {
         statusText += QString::number(tbcSource.getNumberOfFields());
-        statusText += " fields available";
+        statusText += tr(" fields available");
     } else {
         statusText += QString::number(tbcSource.getNumberOfFrames());
-        statusText += " sequential frames available";
+        statusText += tr(" sequential frames available");
     }
 
     sourceVideoStatus.setText(statusText);
@@ -283,11 +320,16 @@ void MainWindow::updateGuiLoaded()
     // Ensure the busy dialogue is hidden
     busyDialog->hide();
 
-    // Disable "Save JSON", now we've loaded the metadata into the GUI
-    ui->actionSave_JSON->setEnabled(false);
+    // Disable "Save Metadata", now we've loaded the metadata into the GUI
+    ui->actionSave_Metadata->setEnabled(false);
 
 	//resize the windows to fit the content in full screen
 	MainWindow::resize_on_aspect();
+	
+	// If resizeFrameWithWindow is enabled, resize frame to fit current window
+	if (resizeFrameWithWindow) {
+		resizeTimer->start();
+	}
 }
 
 // Method to update the GUI when a file is unloaded
@@ -351,11 +393,21 @@ void MainWindow::updateAspectPushButton()
 // Update the source selection button
 void MainWindow::updateSourcesPushButton()
 {
+	// Only show the button if there are multiple sources (not ONE_SOURCE) AND a source is loaded
+	if (tbcSource.getSourceMode() != TbcSource::ONE_SOURCE && tbcSource.getIsSourceLoaded()) {
+		ui->sourcesPushButton->setVisible(true);
+	} else {
+		// Hide the button by default (no source loaded or only one source)
+		ui->sourcesPushButton->setVisible(false);
+		chromaDecoderConfigDialog->updateSourceMode(tbcSource.getSourceMode());
+		return;
+	}
+	
 	if (this->width() >= 930)
 	{
 		switch (tbcSource.getSourceMode()) {
 		case TbcSource::ONE_SOURCE:
-			ui->sourcesPushButton->setText(tr("One Source"));
+			// This case should not be reached due to early return above
 			break;
 		case TbcSource::LUMA_SOURCE:
 			ui->sourcesPushButton->setText(tr("Y Source"));
@@ -372,7 +424,7 @@ void MainWindow::updateSourcesPushButton()
 	{
 		switch (tbcSource.getSourceMode()) {
 		case TbcSource::ONE_SOURCE:
-			ui->sourcesPushButton->setText(tr(".TBC"));
+			// This case should not be reached due to early return above
 			break;
 		case TbcSource::LUMA_SOURCE:
 			ui->sourcesPushButton->setText(tr("Y"));
@@ -605,15 +657,15 @@ void MainWindow::setViewValues()
 			currentNumber = currentFieldNumber;
 			maximum = tbcSource.getNumberOfFields();
 			spinLabel = QString("Field #:");
-			buttonLabel = QString("Field View");
-
-			ui->stretchFieldButton->setEnabled(true);
+			if (tbcSource.getStretchField()) {
+				buttonLabel = QString("Field 2:1");
+			} else {
+				buttonLabel = QString("Field 1:1");
+			}
 		} else {
 			currentNumber = currentFrameNumber;
 			maximum = tbcSource.getNumberOfFrames();
 			spinLabel = QString("Frame #:");
-
-			ui->stretchFieldButton->setEnabled(false);
 
 			if (tbcSource.getSplitViewEnabled()) {
 				buttonLabel = QString("Split View");
@@ -628,15 +680,15 @@ void MainWindow::setViewValues()
 			currentNumber = currentFieldNumber;
 			maximum = tbcSource.getNumberOfFields();
 			spinLabel = QString("Field #:");
-			buttonLabel = QString("Field");
-
-			ui->stretchFieldButton->setEnabled(true);
+			if (tbcSource.getStretchField()) {
+				buttonLabel = QString("Field 2:1");
+			} else {
+				buttonLabel = QString("Field 1:1");
+			}
 		} else {
 			currentNumber = currentFrameNumber;
 			maximum = tbcSource.getNumberOfFrames();
 			spinLabel = QString("Frame #:");
-
-			ui->stretchFieldButton->setEnabled(false);
 
 			if (tbcSource.getSplitViewEnabled()) {
 				buttonLabel = QString("Split");
@@ -702,7 +754,7 @@ void MainWindow::sanitizeCurrentPosition()
 
 void MainWindow::on_actionExit_triggered()
 {
-    qDebug() << "MainWindow::on_actionExit_triggered(): Called";
+    tbcDebugStream() << "MainWindow::on_actionExit_triggered(): Called";
 
     // Quit the application
     qApp->quit();
@@ -711,7 +763,7 @@ void MainWindow::on_actionExit_triggered()
 // Load a TBC file based on the file selection from the GUI
 void MainWindow::on_actionOpen_TBC_file_triggered()
 {
-    qDebug() << "MainWindow::on_actionOpen_TBC_file_triggered(): Called";
+    tbcDebugStream() << "MainWindow::on_actionOpen_TBC_file_triggered(): Called";
 
     QString inputFileName = QFileDialog::getOpenFileName(this,
                 tr("Open TBC file"),
@@ -734,10 +786,10 @@ void MainWindow::on_actionReload_TBC_triggered()
     }
 }
 
-// Start saving the modified JSON metadata
-void MainWindow::on_actionSave_JSON_triggered()
+// Start saving the modified metadata
+void MainWindow::on_actionSave_Metadata_triggered()
 {
-    tbcSource.saveSourceJson();
+    tbcSource.saveSourceMetadata();
 
     // Saving continues in the background...
 }
@@ -808,7 +860,7 @@ void MainWindow::on_actionWhite_SNR_analysis_triggered()
 // Save current frame as PNG
 void MainWindow::on_actionSave_frame_as_PNG_triggered()
 {
-    qDebug() << "MainWindow::on_actionSave_frame_as_PNG_triggered(): Called";
+    tbcDebugStream() << "MainWindow::on_actionSave_frame_as_PNG_triggered(): Called";
 
     // Create a suggestion for the filename
     QString filenameSuggestion = configuration.getPngDirectory();
@@ -855,7 +907,7 @@ void MainWindow::on_actionSave_frame_as_PNG_triggered()
     // Was a filename specified?
     if (!pngFilename.isEmpty() && !pngFilename.isNull()) {
         // Save the current frame as a PNG
-        qDebug() << "MainWindow::on_actionSave_frame_as_PNG_triggered(): Saving current frame as" << pngFilename;
+        tbcDebugStream() << "MainWindow::on_actionSave_frame_as_PNG_triggered(): Saving current frame as" << pngFilename;
 
         // Generate QImage for the current frame
         QImage imageToSave = tbcSource.getImage();
@@ -870,16 +922,16 @@ void MainWindow::on_actionSave_frame_as_PNG_triggered()
 
         // Save the QImage as PNG
         if (!imageToSave.save(pngFilename)) {
-            qDebug() << "MainWindow::on_actionSave_frame_as_PNG_triggered(): Failed to save file as" << pngFilename;
+            tbcDebugStream() << "MainWindow::on_actionSave_frame_as_PNG_triggered(): Failed to save file as" << pngFilename;
 
             QMessageBox messageBox;
-            messageBox.warning(this, "Warning","Could not save a PNG using the specified filename!");
+            messageBox.warning(this, tr("Warning"),tr("Could not save a PNG using the specified filename!"));
         }
 
         // Update the configuration for the PNG directory
         QFileInfo pngFileInfo(pngFilename);
         configuration.setPngDirectory(pngFileInfo.absolutePath());
-        qDebug() << "MainWindow::on_actionSave_frame_as_PNG_triggered(): Setting PNG directory to:" << pngFileInfo.absolutePath();
+        tbcDebugStream() << "MainWindow::on_actionSave_frame_as_PNG_triggered(): Setting PNG directory to:" << pngFileInfo.absolutePath();
         configuration.writeConfiguration();
     }
 }
@@ -939,11 +991,24 @@ void MainWindow::on_actionChroma_decoder_configuration_triggered()
     chromaDecoderConfigDialog->show();
 }
 
+// Toggle chroma during seek option
+void MainWindow::on_actionToggleChromaDuringSeek_triggered()
+{
+    bool enabled = ui->actionToggleChromaDuringSeek->isChecked();
+    configuration.setToggleChromaDuringSeek(enabled);
+    configuration.writeConfiguration();
+
+}
+
 // Media control frame signal handlers --------------------------------------------------------------------------------
 
 // Previous field/frame button has been clicked
 void MainWindow::on_previousPushButton_clicked()
 {
+    // Enter chroma seek mode if appropriate
+    enterChromaSeekMode(ui->previousPushButton);
+    
+    // Normal frame navigation (works the same in both Source and Chroma modes)
     qint32 currentNumber;
     if (tbcSource.getFieldViewEnabled()) {
         setCurrentField(currentFieldNumber - 1);
@@ -960,6 +1025,10 @@ void MainWindow::on_previousPushButton_clicked()
 // Next field/frame button has been clicked
 void MainWindow::on_nextPushButton_clicked()
 {
+    // Enter chroma seek mode if appropriate
+    enterChromaSeekMode(ui->nextPushButton);
+    
+    // Normal frame navigation (works the same in both Source and Chroma modes)
     qint32 currentNumber;
     if (tbcSource.getFieldViewEnabled()) {
         setCurrentField(currentFieldNumber + 1);
@@ -971,6 +1040,42 @@ void MainWindow::on_nextPushButton_clicked()
 
     ui->posNumberSpinBox->setValue(currentNumber);
     ui->posHorizontalSlider->setValue(currentNumber);
+}
+
+// Previous button pressed (for chroma toggle during seek)
+void MainWindow::on_previousPushButton_pressed()
+{
+    if (configuration.getToggleChromaDuringSeek() && tbcSource.getChromaDecoder()) {
+        // Start timer to detect if this is a hold (not just a click)
+        seekTimer->start();
+    }
+}
+
+// Previous button released (for chroma toggle during seek)
+void MainWindow::on_previousPushButton_released()
+{
+    // Stop the hold detection timer if still running
+    seekTimer->stop();
+    
+    exitChromaSeekMode(ui->previousPushButton);
+}
+
+// Next button pressed (for chroma toggle during seek)
+void MainWindow::on_nextPushButton_pressed()
+{
+    if (configuration.getToggleChromaDuringSeek() && tbcSource.getChromaDecoder()) {
+        // Start timer to detect if this is a hold (not just a click)
+        seekTimer->start();
+    }
+}
+
+// Next button released (for chroma toggle during seek)
+void MainWindow::on_nextPushButton_released()
+{
+    // Stop the hold detection timer if still running
+    seekTimer->stop();
+    
+    exitChromaSeekMode(ui->nextPushButton);
 }
 
 // Skip to the next chapter (note: this button was repurposed from 'end frame')
@@ -1035,20 +1140,72 @@ void MainWindow::on_posNumberSpinBox_editingFinished()
 void MainWindow::on_posHorizontalSlider_valueChanged(int value)
 {
     if (!tbcSource.getIsSourceLoaded()) return;
-    qint32 currentNumber;
-
-    if (tbcSource.getFieldViewEnabled()) {
-        setCurrentField(ui->posHorizontalSlider->value());
-        currentNumber = currentFieldNumber;
-    } else {
-        setCurrentFrame(ui->posHorizontalSlider->value());
-        currentNumber = currentFrameNumber;
-    }
-
-    // If the spinbox is enabled, we can update the current field/frame number
-    // otherwise we just ignore this
+    
+    // Update the spinbox immediately for visual feedback
     if (ui->posNumberSpinBox->isEnabled()) {
-        ui->posNumberSpinBox->setValue(currentNumber);
+        ui->posNumberSpinBox->setValue(value);
+    }
+    
+    // Store the pending value
+    pendingSliderValue = value;
+    
+    // If user is actively dragging, start/restart the drag pause timer
+    if (sliderDragging) {
+        dragPauseTimer->start(); // This will update frame if user pauses during drag
+        return;
+    }
+    
+    // For non-dragging updates (keyboard, clicks), use debounced updates
+    sliderDebounceTimer->start(); // Restart the debounce timer
+}
+
+// User started dragging the slider
+void MainWindow::on_posHorizontalSlider_sliderPressed()
+{
+    sliderDragging = true;
+    dragPauseTimer->stop(); // Stop any existing timer
+}
+
+// User finished dragging the slider - now update
+void MainWindow::on_posHorizontalSlider_sliderReleased()
+{
+    sliderDragging = false;
+    dragPauseTimer->stop(); // Stop the pause timer
+    
+    if (pendingSliderValue != -1) {
+        // Update immediately when drag ends
+        if (tbcSource.getFieldViewEnabled()) {
+            setCurrentField(pendingSliderValue);
+        } else {
+            setCurrentFrame(pendingSliderValue);
+        }
+        pendingSliderValue = -1;
+    }
+}
+
+// Debounced update for non-dragging slider changes
+void MainWindow::onSliderDebounceTimeout()
+{
+    if (!sliderDragging && pendingSliderValue != -1) {
+        if (tbcSource.getFieldViewEnabled()) {
+            setCurrentField(pendingSliderValue);
+        } else {
+            setCurrentFrame(pendingSliderValue);
+        }
+        pendingSliderValue = -1;
+    }
+}
+
+// Update frame when user pauses during drag (for visual hunting)
+void MainWindow::onDragPauseTimeout()
+{
+    if (sliderDragging && pendingSliderValue != -1) {
+        if (tbcSource.getFieldViewEnabled()) {
+            setCurrentField(pendingSliderValue);
+        } else {
+            setCurrentFrame(pendingSliderValue);
+        }
+        // Don't clear pendingSliderValue - we still need it for final release
     }
 }
 
@@ -1101,6 +1258,78 @@ void MainWindow::resize_on_aspect()
 	{
 		this->resize(width + 20, height + 140);
 	}
+}
+
+// Resize the frame to fit within the current window size
+void MainWindow::resizeFrameToWindow()
+{
+	if (!tbcSource.getIsSourceLoaded()) {
+		return;
+	}
+
+	// Get the scroll area size (which contains the imageViewerLabel)
+	QScrollArea* scrollArea = ui->scrollArea;
+	QSize availableSize = scrollArea->viewport()->size();
+	
+	// Ensure we have a valid size - sometimes during resize events the size might be invalid
+	if (availableSize.width() <= 0 || availableSize.height() <= 0) {
+		// Use the central widget size as fallback, accounting for margins and toolbars
+		QSize centralSize = ui->centralWidget->size();
+		availableSize = QSize(centralSize.width() - 40, centralSize.height() - 200); // Account for UI elements
+	}
+	
+	// Get the original image size
+	QImage originalImage = tbcSource.getImage();
+	if (originalImage.isNull()) {
+		return;
+	}
+
+	// Calculate scale factor to fit image within available space while maintaining aspect ratio
+	qint32 adjustment = getAspectAdjustment();
+	double scaleX = static_cast<double>(availableSize.width()) / static_cast<double>(originalImage.width() + adjustment);
+	double scaleY = static_cast<double>(availableSize.height()) / static_cast<double>(originalImage.height());
+	
+	// Use the smaller scale factor to maintain aspect ratio
+	double newScaleFactor = qMin(scaleX, scaleY);
+	
+	// Apply a minimum scale factor to prevent the image from becoming too small
+	if (newScaleFactor < 0.1) {
+		newScaleFactor = 0.1;
+	}
+	
+	// Only update if there's a significant change to avoid constant tiny adjustments
+	if (qAbs(newScaleFactor - scaleFactor) > 0.01) {
+		scaleFactor = newScaleFactor;
+		updateImageViewer();
+	}
+}
+
+// Helper method to enter chroma seek mode
+void MainWindow::enterChromaSeekMode(QPushButton* button)
+{
+    if (!chromaSeekMode && !seekTimer->isActive() && configuration.getToggleChromaDuringSeek() && tbcSource.getChromaDecoder() && button->isDown()) {
+        chromaSeekMode = true;
+        originalChromaState = true;
+        tbcSource.setChromaDecoder(false);
+        ui->videoPushButton->setText(tr("Source"));
+    }
+}
+
+// Helper method to exit chroma seek mode
+void MainWindow::exitChromaSeekMode(QPushButton* button)
+{
+    if (chromaSeekMode) {
+        // Use a shorter timer to check if button is truly released (not just auto-repeat)
+        QTimer::singleShot(5, this, [this, button]() {
+            if (!button->isDown()) {
+                // Exit seek mode and restore chroma
+                chromaSeekMode = false;
+                tbcSource.setChromaDecoder(originalChromaState);
+                ui->videoPushButton->setText(tr("Chroma"));
+                updateImage(); // Fast refresh without reloading - frame data already loaded
+            }
+        });
+    }
 }
 
 // Show/hide dropouts button clicked
@@ -1164,27 +1393,32 @@ void MainWindow::on_viewPushButton_clicked()
 {
     switch (tbcSource.getViewMode()) {
         case TbcSource::ViewMode::FRAME_VIEW:
-            qDebug() << "Changing to SPLIT_VIEW mode";
+            tbcDebugStream() << "Changing to SPLIT_VIEW mode";
 
             // Set split mode
             tbcSource.setViewMode(TbcSource::ViewMode::SPLIT_VIEW);
-            //ui->fieldOrderPushButton->setEnabled(false);
             break;
 
         case TbcSource::ViewMode::SPLIT_VIEW:
-            qDebug() << "Changing to FIELD_VIEW mode";
+            tbcDebugStream() << "Changing to FIELD_VIEW mode (1:1)";
 
-            // Set field mode
+            // Set field mode with 1:1 aspect
             tbcSource.setViewMode(TbcSource::ViewMode::FIELD_VIEW);
-            //ui->fieldOrderPushButton->setEnabled(false);
+            tbcSource.setStretchField(false);
             break;
 
         case TbcSource::ViewMode::FIELD_VIEW:
-            qDebug() << "Changing to FRAME_VIEW mode";
+            if (!tbcSource.getStretchField()) {
+                tbcDebugStream() << "Changing to FIELD_VIEW mode (2:1)";
 
-            // Set frame mode
-            tbcSource.setViewMode(TbcSource::ViewMode::FRAME_VIEW);
-            //ui->fieldOrderPushButton->setEnabled(true);
+                // Set field mode with 2:1 aspect
+                tbcSource.setStretchField(true);
+            } else {
+                tbcDebugStream() << "Changing to FRAME_VIEW mode";
+
+                // Set frame mode
+                tbcSource.setViewMode(TbcSource::ViewMode::FRAME_VIEW);
+            }
             break;
     }
 
@@ -1235,6 +1469,20 @@ void MainWindow::on_toggleAutoResize_toggled(bool checked)
 	autoResize = checked;
 }
 
+void MainWindow::on_actionResizeFrameWithWindow_toggled(bool checked)
+{
+	resizeFrameWithWindow = checked;
+	
+	// Save the setting to configuration
+	configuration.setResizeFrameWithWindow(checked);
+	configuration.writeConfiguration();
+	
+	// If resizeFrameWithWindow is now enabled, resize frame to fit current window
+	if (checked && tbcSource.getIsSourceLoaded()) {
+		resizeTimer->start();
+	}
+}
+
 // Zoom in
 void MainWindow::on_zoomInPushButton_clicked()
 {
@@ -1244,6 +1492,7 @@ void MainWindow::on_zoomInPushButton_clicked()
     }
 
     updateImageViewer();
+    resize_on_aspect();
 }
 
 // Zoom out
@@ -1255,6 +1504,7 @@ void MainWindow::on_zoomOutPushButton_clicked()
     }
 
     updateImageViewer();
+    resize_on_aspect();
 }
 
 // Original size 1:1 zoom
@@ -1262,21 +1512,10 @@ void MainWindow::on_originalSizePushButton_clicked()
 {
     scaleFactor = 1.0;
     updateImageViewer();
+    resize_on_aspect();
 }
 
-// Field stretch mode
-void MainWindow::on_stretchFieldButton_clicked()
-{
-    if (tbcSource.getStretchField()) {
-        tbcSource.setStretchField(false);
-        ui->stretchFieldButton->setText(tr("1:1"));
-    } else {
-        tbcSource.setStretchField(true);
-        ui->stretchFieldButton->setText(tr("2:1"));
-    }
 
-    updateImageViewer();
-}
 
 // Mouse mode button clicked
 void MainWindow::on_mouseModePushButton_clicked()
@@ -1298,7 +1537,7 @@ void MainWindow::on_mouseModePushButton_clicked()
 // Handler called when another class changes the currently selected scan line
 void MainWindow::scopeCoordsChangedSignalHandler(qint32 xCoord, qint32 yCoord)
 {
-    qDebug() << "MainWindow::scanLineChangedSignalHandler(): Called with xCoord =" << xCoord << "and yCoord =" << yCoord;
+    tbcDebugStream() << "MainWindow::scanLineChangedSignalHandler(): Called with xCoord =" << xCoord << "and yCoord =" << yCoord;
 
     if (tbcSource.getIsSourceLoaded()) {
         // Show the oscilloscope dialogue for the selected scan-line
@@ -1315,7 +1554,7 @@ void MainWindow::scopeCoordsChangedSignalHandler(qint32 xCoord, qint32 yCoord)
 // Handler called when vectorscope settings are changed
 void MainWindow::vectorscopeChangedSignalHandler()
 {
-    qDebug() << "MainWindow::vectorscopeChangedSignalHandler(): Called";
+    tbcDebugStream() << "MainWindow::vectorscopeChangedSignalHandler(): Called";
 
     if (tbcSource.getIsSourceLoaded()) {
         // Update the vectorscope
@@ -1418,8 +1657,8 @@ void MainWindow::videoParametersChangedSignalHandler(const LdDecodeMetaData::Vid
     // Update the VideoParameters in the source
     tbcSource.setVideoParameters(videoParameters);
 
-    // Enable the "Save JSON" action, since the metadata has been modified
-    ui->actionSave_JSON->setEnabled(true);
+    // Enable the "Save Metadata" action, since the metadata has been modified
+    ui->actionSave_Metadata->setEnabled(true);
 
     // Update the aspect button's label
     updateAspectPushButton();
@@ -1445,7 +1684,7 @@ void MainWindow::chromaDecoderConfigChangedSignalHandler()
 // Signal handler for busy signal from TbcSource class
 void MainWindow::on_busy(QString infoMessage)
 {
-    qDebug() << "MainWindow::on_busy(): Got signal with message" << infoMessage;
+    tbcDebugStream() << "MainWindow::on_busy(): Got signal with message" << infoMessage;
     // Set the busy message and centre the dialog in the parent window
     busyDialog->setMessage(infoMessage);
     busyDialog->move(this->geometry().center() - busyDialog->rect().center());
@@ -1462,7 +1701,7 @@ void MainWindow::on_busy(QString infoMessage)
 // Signal handler for finishedLoading signal from TbcSource class
 void MainWindow::on_finishedLoading(bool success)
 {
-    qDebug() << "MainWindow::on_finishedLoading(): Called";
+    tbcDebugStream() << "MainWindow::on_finishedLoading(): Called";
 
     // Hide the busy dialogue
     busyDialog->hide();
@@ -1502,7 +1741,7 @@ void MainWindow::on_finishedLoading(bool success)
         // Update the configuration for the source directory
         QFileInfo inFileInfo(tbcSource.getCurrentSourceFilename());
         configuration.setSourceDirectory(inFileInfo.absolutePath());
-        qDebug() << "MainWindow::loadTbcFile(): Setting source directory to:" << inFileInfo.absolutePath();
+        tbcDebugStream() << "MainWindow::loadTbcFile(): Setting source directory to:" << inFileInfo.absolutePath();
         configuration.writeConfiguration();
     } else {
         // Load failed
@@ -1520,18 +1759,18 @@ void MainWindow::on_finishedLoading(bool success)
 // Signal handler for finishedSaving signal from TbcSource class
 void MainWindow::on_finishedSaving(bool success)
 {
-    qDebug() << "MainWindow::on_finishedSaving(): Called";
+    tbcDebugStream() << "MainWindow::on_finishedSaving(): Called";
 
     // Hide the busy dialogue
     busyDialog->hide();
 
     if (success) {
-        // Disable the "Save JSON" action until the metadata is modified again
-        ui->actionSave_JSON->setEnabled(false);
+        // Disable the "Save Metadata" action until the metadata is modified again
+        ui->actionSave_Metadata->setEnabled(false);
     } else {
         // Show the error to the user
         QMessageBox messageBox;
-        messageBox.warning(this, "Error", tbcSource.getLastIOError());
+        messageBox.warning(this, tr("Error"), tbcSource.getLastIOError());
     }
 
     // Enable the main window
@@ -1595,37 +1834,41 @@ void MainWindow::resizeEvent(QResizeEvent *event)
 	if (this->width() >= 930)
 	{
 		if (tbcSource.getFieldViewEnabled()) {
-			ui->viewPushButton->setText("Field View");
-
-			ui->stretchFieldButton->setEnabled(true);
-		} else {
-			ui->stretchFieldButton->setEnabled(false);
-
-			if (tbcSource.getSplitViewEnabled()) {
-				ui->viewPushButton->setText("Split View");
+			if (tbcSource.getStretchField()) {
+				ui->viewPushButton->setText(tr("Field 2:1"));
 			} else {
-				ui->viewPushButton->setText("Frame View");
+				ui->viewPushButton->setText(tr("Field 1:1"));
+			}
+		} else {
+			if (tbcSource.getSplitViewEnabled()) {
+				ui->viewPushButton->setText(tr("Split View"));
+			} else {
+				ui->viewPushButton->setText(tr("Frame View"));
 			}
 		}
 	}
 	else
 	{
 		if (tbcSource.getFieldViewEnabled()) {
-			ui->viewPushButton->setText("Field");
-
-			ui->stretchFieldButton->setEnabled(true);
-		} else {
-			ui->stretchFieldButton->setEnabled(false);
-
-			if (tbcSource.getSplitViewEnabled()) {
-				ui->viewPushButton->setText("Split");
+			if (tbcSource.getStretchField()) {
+				ui->viewPushButton->setText(tr("Field 2:1"));
 			} else {
-				ui->viewPushButton->setText("Frame");
+				ui->viewPushButton->setText(tr("Field 1:1"));
+			}
+		} else {
+			if (tbcSource.getSplitViewEnabled()) {
+				ui->viewPushButton->setText(tr("Split"));
+			} else {
+				ui->viewPushButton->setText(tr("Frame"));
 			}
 		}
 	}
 
-	//asepec ratio label
+	//aspect ratio label
 	updateAspectPushButton();
 
+	// Resize frame with window if resizeFrameWithWindow is enabled
+	if (resizeFrameWithWindow && tbcSource.getIsSourceLoaded()) {
+		resizeTimer->start();
+	}
 }

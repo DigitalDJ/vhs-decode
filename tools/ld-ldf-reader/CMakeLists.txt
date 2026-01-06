@@ -5,9 +5,11 @@ pkg_check_modules(FFMPEG REQUIRED IMPORTED_TARGET
 )
 
 add_executable(ld-ldf-reader
-  ld-ldf-reader.c)
+    ldfreader.cpp
+    main.cpp
+)
 
-target_link_libraries(ld-ldf-reader PkgConfig::FFMPEG)
+target_link_libraries(ld-ldf-reader PRIVATE Qt::Core PkgConfig::FFMPEG lddecode-library)
 
 if(VCPKG_TARGET_TRIPLET STREQUAL "x64-windows-static-md" OR VCPKG_TARGET_TRIPLET STREQUAL "x64-windows-static")
 # Needed on msvc with vcpkg - may need equivialent on mingw

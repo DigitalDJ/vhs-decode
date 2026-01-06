@@ -1,40 +1,106 @@
-/************************************************************************
-
-    main.cpp
-
-    ld-analyse - TBC output analysis
-    Copyright (C) 2018-2022 Simon Inns
-
-    This file is part of ld-decode-tools.
-
-    ld-analyse is free software: you can redistribute it and/or
-    modify it under the terms of the GNU General Public License as
-    published by the Free Software Foundation, either version 3 of the
-    License, or (at your option) any later version.
-
-    This program is distributed in the hope that it will be useful,
-    but WITHOUT ANY WARRANTY; without even the implied warranty of
-    MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
-    GNU General Public License for more details.
-
-    You should have received a copy of the GNU General Public License
-    along with this program.  If not, see <http://www.gnu.org/licenses/>.
-
-************************************************************************/
+/******************************************************************************
+ * main.cpp
+ * ld-analyse - TBC output analysis GUI
+ *
+ * SPDX-License-Identifier: GPL-3.0-or-later
+ * SPDX-FileCopyrightText: 2018-2025 Simon Inns
+ *
+ * This file is part of ld-decode-tools.
+ ******************************************************************************/
 
 #include "mainwindow.h"
 #include <QApplication>
 #include <QDebug>
 #include <QtGlobal>
 #include <QCommandLineParser>
+#include <QLoggingCategory>
 
-#include "logging.h"
+#ifdef Q_OS_WIN
+#include <QSettings>
+#elif defined(Q_OS_MACOS)
+#include <QProcess>
+#elif defined(Q_OS_LINUX)
+#include <QProcess>
+#endif
+
+#include "tbc/logging.h"
+
+// Cross-platform function to detect if system is in dark mode
+bool isDarkModeEnabled() {
+#ifdef Q_OS_WIN
+    QSettings settings("HKEY_CURRENT_USER\\Software\\Microsoft\\Windows\\CurrentVersion\\Themes\\Personalize", QSettings::NativeFormat);
+    return settings.value("AppsUseLightTheme", 1).toInt() == 0;
+#elif defined(Q_OS_MACOS)
+    QProcess process;
+    process.start("defaults", QStringList() << "read" << "-g" << "AppleInterfaceStyle");
+    process.waitForFinished();
+    QString result = process.readAllStandardOutput().trimmed();
+    return result == "Dark";
+#elif defined(Q_OS_LINUX)
+    // Try gsettings for GNOME color-scheme (modern approach)
+    QProcess process;
+    process.start("gsettings", QStringList() << "get" << "org.gnome.desktop.interface" << "color-scheme");
+    process.waitForFinished();
+    QString result = process.readAllStandardOutput().trimmed();
+    result = result.remove('\'').remove('"'); // Remove quotes
+    if (result.contains("dark", Qt::CaseInsensitive)) {
+        return true;
+    }
+    
+    // Fallback: Check GTK theme name
+    process.start("gsettings", QStringList() << "get" << "org.gnome.desktop.interface" << "gtk-theme");
+    process.waitForFinished();
+    result = process.readAllStandardOutput().trimmed();
+    result = result.remove('\'').remove('"');
+    return result.contains("dark", Qt::CaseInsensitive);
+#endif
+    return false;
+}
+
+// Apply a dark theme palette to the application
+void applyDarkTheme(QApplication &app) {
+    QPalette darkPalette;
+    
+    // Define dark theme colors
+    QColor windowColor(53, 53, 53);
+    QColor baseColor(25, 25, 25);
+    QColor alternateColor(64, 64, 64);
+    QColor textColor(255, 255, 255);
+    QColor buttonColor(53, 53, 53);
+    QColor highlightColor(42, 130, 218);
+    QColor highlightTextColor(255, 255, 255);
+    
+    // Set palette colors
+    darkPalette.setColor(QPalette::Window, windowColor);
+    darkPalette.setColor(QPalette::WindowText, textColor);
+    darkPalette.setColor(QPalette::Base, baseColor);
+    darkPalette.setColor(QPalette::AlternateBase, alternateColor);
+    darkPalette.setColor(QPalette::Text, textColor);
+    darkPalette.setColor(QPalette::Button, buttonColor);
+    darkPalette.setColor(QPalette::ButtonText, textColor);
+    darkPalette.setColor(QPalette::Highlight, highlightColor);
+    darkPalette.setColor(QPalette::HighlightedText, highlightTextColor);
+    
+    app.setPalette(darkPalette);
+}
+
+// Custom message handler that filters out harmless Qt system warnings
+void filteredDebugOutputHandler(QtMsgType type, const QMessageLogContext &context, const QString &msg)
+{
+    // Filter out harmless Qt system warnings that don't affect functionality
+    if (msg.contains("Wayland does not support QWindow::requestActivate()") ||
+        msg.contains("QSocketNotifier: Can only be used with threads started with QThread")) {
+        return; // Don't output these warnings
+    }
+    
+    // Call the original handler for all other messages
+    debugOutputHandler(type, context, msg);
+}
 
 int main(int argc, char *argv[])
 {
-    // Install the local debug message handler
-    setDebug(true);
-    qInstallMessageHandler(debugOutputHandler);
+    // Install the local debug message handler with Qt system warning filtering
+    qInstallMessageHandler(filteredDebugOutputHandler);
 
     QApplication a(argc, argv);
 
@@ -48,7 +114,7 @@ int main(int argc, char *argv[])
     parser.setApplicationDescription(
         "ld-analyse - TBC output analysis\n"
         "\n"
-        "(c)2018-2022 Simon Inns\n"
+        "(c)2018-2025 Simon Inns\n"
         "(c)2020-2022 Adam Sampson\n"
         "GPLv3 Open-Source - github: https://github.com/happycube/ld-decode");
     parser.addHelpOption();
@@ -56,6 +122,9 @@ int main(int argc, char *argv[])
 
     // Add the standard debug options --debug and --quiet
     addStandardDebugOptions(parser);
+
+    // Add theme override option
+    parser.addOption(QCommandLineOption("force-dark-theme", "Force dark theme regardless of system settings"));
 
     // Positional argument to specify input video file
     parser.addPositionalArgument("input", QCoreApplication::translate("main", "Specify input TBC file"));
@@ -65,6 +134,25 @@ int main(int argc, char *argv[])
 
     // Standard logging options
     processStandardDebugOptions(parser);
+
+    // Check for theme override
+    bool forceDarkTheme = parser.isSet("force-dark-theme");
+
+    // Determine theme: command line override takes precedence over system detection
+    bool shouldApplyDarkTheme;
+    if (forceDarkTheme) {
+        shouldApplyDarkTheme = true;
+        a.setProperty("isDarkTheme", true);
+    } else {
+        // Qt on Linux doesn't automatically pick up GTK themes, so detect manually
+        shouldApplyDarkTheme = isDarkModeEnabled();
+        // Don't set property - let PlotWidget detect from applied palette
+    }
+    
+    // Apply dark theme if needed (Qt doesn't do this automatically on Linux)
+    if (shouldApplyDarkTheme) {
+        applyDarkTheme(a);
+    }
 
     // Get the arguments from the parser
     QString inputFileName;
